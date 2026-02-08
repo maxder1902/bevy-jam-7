@@ -50,6 +50,8 @@ pub(super) fn plugin(app: &mut App) {
 pub struct LevelAssets {
     #[dependency]
     music: Handle<AudioSample>,
+    #[dependency]
+    cube: Handle<Scene>,
 }
 
 impl FromWorld for LevelAssets {
@@ -57,14 +59,13 @@ impl FromWorld for LevelAssets {
         let assets = world.resource::<AssetServer>();
         Self {
             music: assets.load("audio/music/Fluffing A Duck.ogg"),
+            cube: assets.load(GltfAssetLabel::Scene(0).from_asset("models/scene.glb")),
         }
     }
 }
 
 fn spawn_level(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     level_assets: Res<LevelAssets>,
     camera: Single<Entity, With<Camera3d>>,
 ) {
@@ -79,20 +80,7 @@ fn spawn_level(
             music(level_assets.music.clone()),
         ))
         .id();
-    let base = commands
-        .spawn((
-            Mesh3d(meshes.add(Circle::new(4.0))),
-            MeshMaterial3d(materials.add(Color::WHITE)),
-            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-        ))
-        .id();
-    let cube = commands
-        .spawn((
-            Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-            MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
-            Transform::from_xyz(0.0, 0.5, 0.0),
-        ))
-        .id();
+    let scene = commands.spawn(SceneRoot(level_assets.cube.clone())).id();
     let light = commands
         .spawn((
             PointLight {
@@ -110,7 +98,7 @@ fn spawn_level(
             Visibility::default(),
             DespawnOnExit(Screen::Gameplay),
         ))
-        .add_children(&[*camera, music, base, cube, light]);
+        .add_children(&[*camera, music, scene, light]);
 }
 
 fn unpause(mut next_pause: ResMut<NextState<Pause>>) {
