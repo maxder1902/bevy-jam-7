@@ -1,24 +1,38 @@
 //! The screen state for the main gameplay.
 
-use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+use avian3d::{
+    PhysicsPlugins,
+    prelude::{CoefficientCombine, Collider, Friction, GravityScale, Restitution},
+};
+use bevy::{input::common_conditions::input_just_pressed, prelude::*, window::CursorOptions};
 use bevy_seedling::sample::AudioSample;
 
-use crate::{Pause, asset_tracking::LoadResource, audio::music, menus::Menu, screens::Screen};
+use crate::{
+    Pause,
+    asset_tracking::LoadResource,
+    audio::music,
+    menus::Menu,
+    screens::{
+        Screen,
+        gameplay::character_controller::{CharacterControllerBundle, CharacterControllerPlugin},
+        set_cursor_grab,
+    },
+};
+
+mod character_controller;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default, Reflect)]
 #[reflect(Component)]
 struct Player;
 
 pub(super) fn plugin(app: &mut App) {
+    app.add_plugins((PhysicsPlugins::default(), CharacterControllerPlugin));
     app.load_resource::<LevelAssets>();
     app.add_systems(OnEnter(Screen::Gameplay), spawn_level);
     app.add_systems(
         OnExit(Screen::Gameplay),
         |mut commands: Commands, camera: Single<Entity, With<Camera3d>>| {
-            commands
-                .entity(*camera)
-                .remove::<Player>()
-                .remove_parent_in_place(); // make it so it's not despawned with the level
+            commands.entity(*camera).remove_parent_in_place(); // make it so it's not despawned with the level
         },
     );
 
@@ -68,11 +82,30 @@ fn spawn_level(
     mut commands: Commands,
     level_assets: Res<LevelAssets>,
     camera: Single<Entity, With<Camera3d>>,
+    mut cursor_options: Single<&mut CursorOptions>,
 ) {
+    set_cursor_grab(&mut cursor_options, true);
+    let player = commands
+        .spawn((
+            Name::new("Player"),
+            CharacterControllerBundle::new(Collider::capsule(0.4, 1.0)).with_movement(
+                50.0,
+                0.92,
+                7.0,
+                30f32.to_radians(),
+            ),
+            Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
+            Restitution::ZERO.with_combine_rule(CoefficientCombine::Min),
+            GravityScale(2.0),
+            Transform::from_xyz(0.0, 1.8, 2.0),
+            Player,
+        ))
+        .add_child(*camera)
+        .id();
+
     commands
         .entity(*camera)
-        .insert(Player)
-        .insert(Transform::from_xyz(-2.5, 4.5, 9.0).looking_at(Vec3::ZERO, Vec3::Y));
+        .insert(Transform::from_xyz(0.0, 1.0, 0.0));
 
     let music = commands
         .spawn((
@@ -89,7 +122,7 @@ fn spawn_level(
             DespawnOnExit(Screen::Gameplay),
             SceneRoot(level_assets.cube.clone()),
         ))
-        .add_children(&[*camera, music]);
+        .add_children(&[player, music]);
 }
 
 fn unpause(mut next_pause: ResMut<NextState<Pause>>) {

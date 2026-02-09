@@ -1,8 +1,12 @@
 //! The pause menu.
 
-use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+use bevy::{input::common_conditions::input_just_pressed, prelude::*, window::CursorOptions};
 
-use crate::{menus::Menu, screens::Screen, theme::widget};
+use crate::{
+    menus::Menu,
+    screens::{Screen, set_cursor_grab},
+    theme::widget,
+};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Menu::Pause), spawn_pause_menu);
@@ -12,7 +16,9 @@ pub(super) fn plugin(app: &mut App) {
     );
 }
 
-fn spawn_pause_menu(mut commands: Commands) {
+fn spawn_pause_menu(mut commands: Commands, mut cursor_options: Single<&mut CursorOptions>) {
+    set_cursor_grab(&mut cursor_options, false);
+
     commands.spawn((
         widget::ui_root("Pause Menu"),
         GlobalZIndex(2),
@@ -30,7 +36,13 @@ fn open_settings_menu(_: On<Pointer<Click>>, mut next_menu: ResMut<NextState<Men
     next_menu.set(Menu::Settings);
 }
 
-fn close_menu(_: On<Pointer<Click>>, mut next_menu: ResMut<NextState<Menu>>) {
+fn close_menu(
+    _: On<Pointer<Click>>,
+    mut next_menu: ResMut<NextState<Menu>>,
+    mut cursor_options: Single<&mut CursorOptions>,
+) {
+    set_cursor_grab(&mut cursor_options, true);
+
     next_menu.set(Menu::None);
 }
 
@@ -38,6 +50,8 @@ fn quit_to_title(_: On<Pointer<Click>>, mut next_screen: ResMut<NextState<Screen
     next_screen.set(Screen::Title);
 }
 
-fn go_back(mut next_menu: ResMut<NextState<Menu>>) {
+fn go_back(mut next_menu: ResMut<NextState<Menu>>, mut cursor_options: Single<&mut CursorOptions>) {
+    set_cursor_grab(&mut cursor_options, true);
+
     next_menu.set(Menu::None);
 }

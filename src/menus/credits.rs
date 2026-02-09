@@ -1,9 +1,15 @@
 //! The credits menu.
 
-use bevy::{ecs::spawn::SpawnIter, input::common_conditions::input_just_pressed, prelude::*};
+use bevy::{
+    ecs::spawn::SpawnIter, input::common_conditions::input_just_pressed, prelude::*,
+    window::CursorOptions,
+};
 use bevy_seedling::sample::AudioSample;
 
-use crate::{asset_tracking::LoadResource, audio::music, menus::Menu, theme::prelude::*};
+use crate::{
+    asset_tracking::LoadResource, audio::music, menus::Menu, screens::set_cursor_grab,
+    theme::prelude::*,
+};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Menu::Credits), spawn_credits_menu);
@@ -16,7 +22,9 @@ pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Menu::Credits), start_credits_music);
 }
 
-fn spawn_credits_menu(mut commands: Commands) {
+fn spawn_credits_menu(mut commands: Commands, mut cursor_options: Single<&mut CursorOptions>) {
+    set_cursor_grab(&mut cursor_options, false);
+
     commands.spawn((
         widget::ui_root("Credits Menu"),
         GlobalZIndex(2),

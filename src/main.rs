@@ -11,7 +11,7 @@ mod menus;
 mod screens;
 mod theme;
 
-use avian3d::PhysicsPlugins;
+use avian3d::prelude::{Physics, PhysicsTime};
 use bevy::{asset::AssetMetaCheck, prelude::*};
 use bevy_skein::SkeinPlugin;
 
@@ -54,7 +54,6 @@ impl Plugin for AppPlugin {
             screens::plugin,
             theme::plugin,
             SkeinPlugin::default(),
-            PhysicsPlugins::default(),
         ));
 
         // Order new `AppSystems` variants by adding them here:
@@ -71,6 +70,16 @@ impl Plugin for AppPlugin {
         // Set up the `Pause` state.
         app.init_state::<Pause>();
         app.configure_sets(Update, PausableSystems.run_if(in_state(Pause(false))));
+        app.add_systems(
+            Update,
+            |mut physics_time: ResMut<Time<Physics>>, paused: Res<State<Pause>>| {
+                if paused.0 {
+                    physics_time.pause();
+                } else {
+                    physics_time.unpause();
+                }
+            },
+        );
 
         // Spawn the main camera.
         app.add_systems(Startup, spawn_camera);

@@ -1,14 +1,21 @@
 //! The main menu (seen on the title screen).
 
-use bevy::prelude::*;
+use bevy::{prelude::*, window::CursorOptions};
 
-use crate::{asset_tracking::ResourceHandles, menus::Menu, screens::Screen, theme::widget};
+use crate::{
+    asset_tracking::ResourceHandles,
+    menus::Menu,
+    screens::{Screen, set_cursor_grab},
+    theme::widget,
+};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Menu::Main), spawn_main_menu);
 }
 
-fn spawn_main_menu(mut commands: Commands) {
+fn spawn_main_menu(mut commands: Commands, mut cursor_options: Single<&mut CursorOptions>) {
+    set_cursor_grab(&mut cursor_options, false);
+
     commands.spawn((
         widget::ui_root("Main Menu"),
         GlobalZIndex(2),

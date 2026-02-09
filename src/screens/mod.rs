@@ -5,7 +5,10 @@ mod loading;
 mod splash;
 mod title;
 
-use bevy::prelude::*;
+use bevy::{
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions},
+};
 
 pub(super) fn plugin(app: &mut App) {
     app.init_state::<Screen>();
@@ -26,4 +29,13 @@ pub enum Screen {
     Title,
     Loading,
     Gameplay,
+}
+
+pub fn set_cursor_grab(cursor_options: &mut CursorOptions, grab: bool) {
+    cursor_options.visible = !grab;
+    cursor_options.grab_mode = if grab {
+        CursorGrabMode::Locked
+    } else {
+        CursorGrabMode::None
+    };
 }
