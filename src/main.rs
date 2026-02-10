@@ -17,7 +17,7 @@ use bevy::{
     camera::Exposure,
     core_pipeline::tonemapping::Tonemapping,
     light::{AtmosphereEnvironmentMapLight, GlobalAmbientLight, SunDisk, VolumetricFog},
-    pbr::{Atmosphere, AtmosphereSettings},
+    pbr::{Atmosphere, AtmosphereSettings, Falloff, PhaseFunction, ScatteringTerm},
     post_process::bloom::Bloom,
     prelude::*,
 };
@@ -124,10 +124,32 @@ fn spawn_camera(
     mut commands: Commands,
     mut scattering_mediums: ResMut<Assets<bevy::pbr::ScatteringMedium>>,
 ) {
+    // Custom alien green atmosphere with green-dominant Rayleigh scattering
+    let green_medium = bevy::pbr::ScatteringMedium::new(
+        256,
+        256,
+        [
+            // Rayleigh scattering term - green-purple
+            ScatteringTerm {
+                absorption: Vec3::ZERO,
+                scattering: Vec3::new(10.0e-6, 80.0e-6, 15.0e-6), // Much higher green, reduced red/blue
+                falloff: Falloff::Exponential { scale: 8.0 / 60.0 },
+                phase: PhaseFunction::Rayleigh,
+            },
+            // Mie scattering term - thick atmosphere (2.0e-6)
+            ScatteringTerm {
+                absorption: Vec3::splat(3.996e-6),
+                scattering: Vec3::splat(2.0e-6), // Thick Mie scattering
+                falloff: Falloff::Exponential { scale: 1.2 / 60.0 },
+                phase: PhaseFunction::Mie { asymmetry: 0.8 },
+            },
+        ],
+    );
+
     commands.spawn((
         Name::new("Camera"),
         Camera3d::default(),
-        Atmosphere::earthlike(scattering_mediums.add(bevy::pbr::ScatteringMedium::default())),
+        Atmosphere::earthlike(scattering_mediums.add(green_medium)),
         AtmosphereSettings::default(),
         Exposure {
             ev100: Exposure::EV100_BLENDER,
