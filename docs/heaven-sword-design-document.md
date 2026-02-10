@@ -1,16 +1,3 @@
----
-# yaml-language-server: $schema=schemas/page.schema.json
-Object type:
-    - Page
-Creation date: "2026-02-10T11:50:20Z"
-Created by:
-    - Rustic Croissant
-Links:
-    - story.md
-    - gameplay.md
-    - enemies.md
-id: bafyreibyzymbvik2off42bd2uoyc5lqlwibzailo47h2dfnfyrvivvunq4
----
 # Heaven sword Design document   
 ## Basic stuff   
 Theme of the jam - Extremely Incohesive fever dream.   
@@ -19,7 +6,7 @@ Setting - High in the clouds (hence you're "high" like from smoking).
    
 # Main Character   
 You play as agile girl ~25 yrs old, mainly calm personality, but the action of the game will test her mental stamina.   
-Not much to know about her for now, but he probably has a dog in real life. The girl is fine, just really tired from her life. Somehow she falls asleep    
+Not much to know about her for now, but she probably has a dog in real life. The girl is fine, just really tired from her life. Somehow she falls asleep    
    
 # Goal of the game   
 Get to the end by clearing all the levels and wake up basically.   

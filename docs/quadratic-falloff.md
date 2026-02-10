@@ -1,14 +1,3 @@
----
-# yaml-language-server: $schema=schemas/page.schema.json
-Object type:
-    - Page
-Backlinks:
-    - enemies.md
-Creation date: "2026-02-10T14:22:20Z"
-Created by:
-    - Rustic Croissant
-id: bafyreidqaisy5sio3xx5xv63wmid2qxypqteivylao5mmov7bcuhuga2fu
----
 # quadratic falloff   
 Dmg = base dmg / (1 + distance^2)   
 use this for explosions   

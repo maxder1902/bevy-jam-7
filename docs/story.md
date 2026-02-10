@@ -1,14 +1,3 @@
----
-# yaml-language-server: $schema=schemas/page.schema.json
-Object type:
-    - Page
-Backlinks:
-    - heaven-sword-design-document.md
-Creation date: "2026-02-10T13:31:34Z"
-Created by:
-    - Rustic Croissant
-id: bafyreiezdwvisi2bijpyyfxdznl5ukcgno7cno3tdjcuwyz35lkhexdlu4
----
 # Story   
 The game starts as a walking simulator, you can punch things as you go. You can interact with stuff trying to figure out what's going on.   
 At the beginning everything is normal, you do some normal activity like cooking, watching TV or sitting in front of a computer. Suddenly The dog starts barking, you're annoyed "not now buddy", then he squeals and stops barking. You check what happened and find the dog lying on the floor together with some weird crystal. You come closer to inspect the crystal and when you look at it you're getting hypnotized and fall into fever dream. The meat of the game then starts.   

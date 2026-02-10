@@ -1,16 +1,3 @@
----
-# yaml-language-server: $schema=schemas/page.schema.json
-Object type:
-    - Page
-Backlinks:
-    - heaven-sword-design-document.md
-Creation date: "2026-02-10T13:44:22Z"
-Created by:
-    - Rustic Croissant
-Links:
-    - quadratic-falloff.md
-id: bafyreibvdbtkr3vcxr7fgiq7q24womlrh2plyx52lw2o6ycwp2ytbp7cpe
----
 # Enemies   
 ### Hammerhead   
 ![image](files/image.png)    
