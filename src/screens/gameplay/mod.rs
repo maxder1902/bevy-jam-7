@@ -1,11 +1,11 @@
 //! The screen state for the main gameplay.
 
-use avian3d::{
-    PhysicsPlugins,
-    prelude::{CoefficientCombine, Collider, Friction, GravityScale, Restitution},
-};
+use avian3d::{PhysicsPlugins, prelude::*};
 use bevy::{input::common_conditions::input_just_pressed, prelude::*, window::CursorOptions};
+use bevy_landmass::prelude::*;
+use bevy_rerecast::prelude::*;
 use bevy_seedling::sample::AudioSample;
+use landmass_rerecast::{Island3dBundle, LandmassRerecastPlugin, NavMeshHandle3d};
 
 use crate::{
     Pause,
@@ -20,7 +20,7 @@ mod enemy;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Reflect)]
 #[reflect(Component)]
-struct Player {
+pub struct Player {
     // normalized values (0.0..1.0)
     health: f32,
     hallucination_severity: f32,
@@ -49,6 +49,11 @@ impl Player {
 pub(super) fn plugin(app: &mut App) {
     app.add_plugins((
         PhysicsPlugins::default(),
+        bevy_landmass::Landmass3dPlugin::default(),
+        bevy_landmass::debug::Landmass3dDebugPlugin::default(),
+        bevy_rerecast::NavmeshPlugins::default(),
+        avian_rerecast::AvianBackendPlugin::default(),
+        LandmassRerecastPlugin::default(),
         character_controller::CharacterControllerPlugin,
         enemy::EnemyPlugin,
         checkpoints::CheckpointPlugin,
@@ -79,6 +84,12 @@ pub(super) fn plugin(app: &mut App) {
         OnEnter(Menu::None),
         unpause.run_if(in_state(Screen::Gameplay)),
     );
+
+    app.add_systems(
+        Update,
+        generate_navmesh.run_if(in_state(Screen::Gameplay)), //.run_if(input_just_pressed(KeyCode::Space)),
+    );
+    app.add_observer(handle_navmesh_ready);
 }
 
 #[derive(Resource, Asset, Clone, Reflect)]
@@ -124,12 +135,34 @@ fn spawn_level(
     level_assets: Res<LevelAssets>,
     camera: Single<Entity, With<Camera3d>>,
     mut cursor_options: Single<&mut CursorOptions>,
+    mut generator: NavmeshGenerator,
 ) {
+    commands.insert_resource(NavmeshDone(false));
+
+    let archipelago_options: ArchipelagoOptions<ThreeD> =
+        ArchipelagoOptions::from_agent_radius(0.5);
+    // archipelago_options.point_sample_distance.distance_above = -2.5;
+    // archipelago_options.point_sample_distance.distance_below = -2.5;
+
+    let archipelago_id = commands.spawn(Archipelago3d::new(archipelago_options)).id();
+
+    commands.spawn(Island3dBundle {
+        island: Island,
+        archipelago_ref: ArchipelagoRef3d::new(archipelago_id),
+        nav_mesh: NavMeshHandle3d(generator.generate(NavmeshSettings {
+            agent_radius: 0.5,
+            ..default()
+        })),
+    });
+
+    commands.insert_resource(NavmeshArchipelagoHolder(archipelago_id));
+
     set_cursor_grab(&mut cursor_options, true);
+    let player_collider = Collider::capsule(0.4, 1.0);
     let player = commands
         .spawn((
             Name::new("Player"),
-            CharacterControllerBundle::new(Collider::capsule(0.4, 1.0)).with_movement(
+            CharacterControllerBundle::new(player_collider.clone()).with_movement(
                 5.0,
                 0.90,
                 7.0,
@@ -138,8 +171,9 @@ fn spawn_level(
             Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
             Restitution::ZERO.with_combine_rule(CoefficientCombine::Min),
             GravityScale(2.0),
-            Transform::from_xyz(0.0, 1.8, 2.0),
+            Transform::from_xyz(0.0, 0.9, 2.0),
             Player::default(),
+            Children::spawn_one((player_collider, Transform::from_xyz(0., 0.9, 0.))),
         ))
         .add_child(*camera)
         .id();
@@ -184,11 +218,11 @@ fn spawn_level(
         .id();
 
     commands.queue(enemy::EnemySpawnCmd {
-        pos: Isometry3d::from_translation(vec3(0.0, 0.9, 5.0)),
+        pos: Isometry3d::from_translation(vec3(0.0, 0.0, 5.0)),
         parent: Some(level),
     });
     commands.queue(enemy::EnemySpawnCmd {
-        pos: Isometry3d::from_translation(vec3(4.0, 0.9, 5.0)),
+        pos: Isometry3d::from_translation(vec3(4.0, 0.0, 5.0)),
         parent: Some(level),
     });
 }
@@ -222,3 +256,50 @@ fn open_pause_menu(mut next_menu: ResMut<NextState<Menu>>) {
 fn close_menu(mut next_menu: ResMut<NextState<Menu>>) {
     next_menu.set(Menu::None);
 }
+
+fn generate_navmesh(
+    mut generator: NavmeshGenerator,
+    island: Query<&NavMeshHandle3d, With<Island>>,
+    navmesh_done: Res<NavmeshDone>,
+) {
+    if navmesh_done.0 {
+        return;
+    }
+
+    for island in &island {
+        generator.regenerate(
+            &island.0,
+            NavmeshSettings {
+                agent_radius: 0.5,
+                ..default()
+            },
+        );
+    }
+}
+
+#[derive(Resource)]
+struct NavmeshDone(bool);
+
+fn handle_navmesh_ready(_: On<NavmeshReady>, mut navmesh_done: ResMut<NavmeshDone>) {
+    navmesh_done.0 = true;
+}
+
+// fn regenrate_navmesh_on_collider_ready(
+//     _: On<ColliderConstructorReady>,
+//     mut generator: NavmeshGenerator,
+//     island: Query<&NavMeshHandle3d, With<Island>>,
+// ) {
+//     println!("Regenerating navmesh");
+//     for island in &island {
+//         generator.regenerate(
+//             &island.0,
+//             NavmeshSettings {
+//                 agent_radius: 0.5,
+//                 ..default()
+//             },
+//         );
+//     }
+// }
+
+#[derive(Resource)]
+pub struct NavmeshArchipelagoHolder(pub Entity);

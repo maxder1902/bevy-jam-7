@@ -1,11 +1,26 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
+use bevy_landmass::prelude::*;
 
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
-    fn build(&self, _app: &mut App) {
-        //
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (enemy_track_nearby_player, enemy_move_toward_target).chain(),
+        );
+
+        // #[cfg(feature = "dev")]
+        // {
+        //     app.add_systems(
+        //         Update,
+        //         print_desired_velocity.run_if(bevy::input::common_conditions::input_toggle_active(
+        //             false,
+        //             crate::dev_tools::TOGGLE_KEY,
+        //         )),
+        //     );
+        // }
     }
 }
 
@@ -28,21 +43,79 @@ fn spawn_enemy(
     mut c: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    navmesh_ref: Res<super::NavmeshArchipelagoHolder>,
 ) {
     let mut enemy = c.spawn((
         Name::new("Enemy"),
         Enemy,
         Transform::from_isometry(args.pos),
         Visibility::Inherited,
-        RigidBody::Static,
+        RigidBody::Kinematic,
+        Agent3dBundle {
+            agent: default(),
+            archipelago_ref: ArchipelagoRef3d::new(navmesh_ref.0),
+            settings: AgentSettings {
+                radius: 0.5,
+                desired_speed: 1.0,
+                max_speed: 2.0,
+            },
+        },
+        AgentTarget3d::None,
+        // AgentTarget3d::Point(vec3(0.0, 0.0, 0.0)),
         Children::spawn_one((
             Mesh3d(meshes.add(Capsule3d::new(0.4, 1.0))),
             MeshMaterial3d(materials.add(Color::srgb_u8(255, 144, 124))),
             Collider::capsule(0.4, 1.0),
+            Transform::from_xyz(0.0, (0.4 + 1.0) * 0.5, 0.0),
         )),
     ));
 
     if let Some(parent) = args.parent {
         enemy.insert(ChildOf(parent));
+    }
+}
+
+// fn print_desired_velocity(query: Query<(Entity, &AgentDesiredVelocity3d, &AgentState)>) {
+//     for (entity, desired_velocity, s) in query.iter() {
+//         println!(
+//             "entity={:?}, desired_velocity={} {s:?}",
+//             entity,
+//             desired_velocity.velocity()
+//         );
+//     }
+// }
+
+fn enemy_track_nearby_player(
+    mut enemies: Query<(&Transform, &mut AgentTarget3d), With<Enemy>>,
+    players: Query<(Entity, &Transform), With<super::Player>>,
+) {
+    const DETECTION_RANGE: f32 = 5.0;
+
+    let Some((player_entity, player_transform)) = players.iter().next() else {
+        return;
+    };
+
+    for (enemy_transform, mut target) in enemies.iter_mut() {
+        let distance = enemy_transform
+            .translation
+            .distance(player_transform.translation);
+
+        if distance <= DETECTION_RANGE {
+            *target = AgentTarget3d::Entity(player_entity);
+        } else {
+            *target = AgentTarget3d::None;
+        }
+    }
+}
+
+fn enemy_move_toward_target(
+    mut enemies: Query<(&AgentTarget3d, &AgentDesiredVelocity3d, &mut LinearVelocity), With<Enemy>>,
+) {
+    for (target, desired_velocity, mut linear_velocity) in enemies.iter_mut() {
+        if matches!(target, AgentTarget3d::Entity(_)) {
+            linear_velocity.0 = desired_velocity.velocity();
+        } else {
+            linear_velocity.0 = Vec3::ZERO;
+        }
     }
 }
