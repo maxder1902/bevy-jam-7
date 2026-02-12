@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use bevy_seedling::{
     SeedlingPlugin,
+    prelude::{LowPassNode, SampleEffects},
     sample::{AudioSample, SamplePlayer},
+    sample_effects,
 };
 
 pub(super) fn plugin(app: &mut App) {
@@ -34,9 +36,10 @@ pub fn music(handle: Handle<AudioSample>) -> impl Bundle {
 pub struct SoundEffect;
 
 /// A sound effect audio instance.
-pub fn sound_effect(handle: Handle<AudioSample>) -> impl Bundle {
+pub fn sound_effect(handle: Handle<AudioSample>, fx: impl Bundle) -> impl Bundle {
     (
         SamplePlayer::new(handle).with_volume(bevy_seedling::prelude::Volume::Decibels(-16.0)),
+        fx,
         SoundEffect,
     )
 }

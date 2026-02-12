@@ -30,7 +30,7 @@ impl Plugin for EnemyPlugin {
                 apply_gravity,
             )
                 .chain()
-                            .run_if(in_state(Screen::Gameplay)),
+                .run_if(in_state(Screen::Gameplay)),
         );
 
         // Run collision handling after collision detection

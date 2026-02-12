@@ -93,7 +93,7 @@ fn play_sound_effect_on_click(
     interaction_assets: If<Res<InteractionAssets>>,
     mut commands: Commands,
 ) {
-    commands.spawn(sound_effect(interaction_assets.click.clone()));
+    commands.spawn(sound_effect(interaction_assets.click.clone(), ()));
 }
 
 fn play_sound_effect_on_over(
@@ -101,5 +101,5 @@ fn play_sound_effect_on_over(
     interaction_assets: If<Res<InteractionAssets>>,
     mut commands: Commands,
 ) {
-    commands.spawn(sound_effect(interaction_assets.hover.clone()));
+    commands.spawn(sound_effect(interaction_assets.hover.clone(), ()));
 }

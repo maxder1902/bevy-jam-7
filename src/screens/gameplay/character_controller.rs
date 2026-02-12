@@ -1,5 +1,6 @@
 use avian3d::prelude::*;
 use bevy::{ecs::query::Has, input::mouse::MouseMotion, prelude::*, window::PrimaryWindow};
+use bevy_seedling::{prelude::LowPassNode, sample_effects};
 
 use super::enemy::{Enemy, Knockback};
 use crate::{
@@ -297,13 +298,18 @@ fn movement(
                     linear_velocity.0 +=
                         movement_direction * movement_acceleration.0 * speed_multiplier;
 
+                    info!("linvel sq: {}", linear_velocity.length_squared());
+
                     let length =
                         movement_direction.length() * movement_acceleration.0 * speed_multiplier;
                     if is_grounded && length > 0.05 && *sound_cooldown <= 0.0 {
-                        commands
-                            .entity(*level)
-                            .with_child(sound_effect(level_assets.step1.clone()));
-                        *sound_cooldown = 0.2 / length;
+                        commands.entity(*level).with_child(sound_effect(
+                            level_assets.step1.clone(),
+                            sample_effects!(LowPassNode {
+                                frequency: linear_velocity.length_squared() * 20.0,
+                            }),
+                        ));
+                        *sound_cooldown = 0.35 / length;
                     }
                 }
                 // SAME AS MOVE BUT WITH EXTRA Y VELOCITY
@@ -315,9 +321,10 @@ fn movement(
                     let movement_direction =
                         forward * direction.y + right * direction.x + Vec3::Y * 10.0;
                     linear_velocity.0 += movement_direction * movement_acceleration.0 * 0.1;
-                    commands
-                        .entity(*level)
-                        .with_child(sound_effect(level_assets.whoosh1.clone()));
+                    commands.entity(*level).with_child(sound_effect(
+                        level_assets.whoosh1.clone(),
+                        sample_effects!(),
+                    ));
                 }
                 MovementAction::Look(direction) => {
                     let (mut yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
@@ -411,7 +418,7 @@ fn attack(
                 // TODO: punch sound effect
                 commands
                     .entity(*level)
-                    .with_child(sound_effect(level_assets.whoosh1.clone()));
+                    .with_child(sound_effect(level_assets.whoosh1.clone(), ()));
             }
         }
     }
