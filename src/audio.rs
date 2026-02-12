@@ -1,9 +1,7 @@
 use bevy::prelude::*;
 use bevy_seedling::{
     SeedlingPlugin,
-    prelude::{LowPassNode, SampleEffects},
     sample::{AudioSample, SamplePlayer},
-    sample_effects,
 };
 
 pub(super) fn plugin(app: &mut App) {
