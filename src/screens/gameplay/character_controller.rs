@@ -128,7 +128,7 @@ impl CharacterControllerBundle {
                 Dir3::NEG_Y,
             )
             .with_max_distance(0.2)
-            .with_max_hits(10),
+            .with_max_hits(5),
             locked_axes: LockedAxes::ROTATION_LOCKED,
             movement: MovementBundle::default(),
         }
@@ -160,8 +160,10 @@ fn kbm_input(
     let right = keyboard_input.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
     let dash = keyboard_input.just_pressed(KeyCode::ShiftLeft);
     let punch = keyboard_input.just_pressed(KeyCode::KeyV);
-    let damage = keyboard_input.just_pressed(KeyCode::KeyH);
 
+    #[cfg(feature = "dev")]
+    let damage = keyboard_input.just_pressed(KeyCode::KeyH);
+    #[cfg(feature = "dev")]
     if damage {
         player.health = (player.health - 0.25).max(0.0);
     }
