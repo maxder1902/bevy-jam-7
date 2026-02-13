@@ -22,7 +22,11 @@ use crate::{
     Pause,
     asset_tracking::LoadResource,
     menus::Menu,
-    screens::{Screen, gameplay::player::Player, set_cursor_grab},
+    screens::{
+        Screen,
+        gameplay::{character_controller::CameraRotation, player::Player},
+        set_cursor_grab,
+    },
 };
 
 mod character_controller;
@@ -169,8 +173,10 @@ fn spawn_level(
         .id();
 
     // Set camera position and add atmosphere
+    let transform = Transform::from_xyz(0.0, 0.8 + 0.9, 0.0);
     commands.entity(camera).insert((
-        Transform::from_xyz(0.0, 0.8 + 0.9, 0.0),
+        transform,
+        CameraRotation(transform.rotation.x),
         Atmosphere::earthlike(scattering_mediums.add(ScatteringMedium::default())),
         AtmosphereSettings::default(),
         Exposure {
