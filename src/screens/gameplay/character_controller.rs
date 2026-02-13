@@ -372,21 +372,22 @@ fn attack(
         const PUNCH_FORCE: f32 = 15.0;
         // Right now we only care it's in player forward direction
         // Consider other ways(maybe ray-cast?) to check if `Punchable` is there
-        const MIN_DOT_PRODUCT: f32 = 0.1;
+        const MIN_DOT_PRODUCT: f32 = 0.75;
 
         let target_pos = target_transform.translation();
 
-        let to_object_from_player = target_pos - (*player_transform).translation;
+        let to_object_from_player = target_pos - player_transform.translation;
         let distance = to_object_from_player.length();
 
-        let push_direction = (to_object_from_player
-            + Vec3 {
-                y: 0.2,
-                ..default()
-            })
-        .normalize();
+        if distance > PUNCH_RANGE {
+            debug!("too far ({distance})");
+            return None;
+        }
+
+        let push_direction = (to_object_from_player.normalize() + 0.17 * Vec3::Y).normalize();
         let dot_product = punch_forward.dot(push_direction);
-        if distance < PUNCH_RANGE && dot_product > MIN_DOT_PRODUCT {
+        debug!("dot: {dot_product}");
+        if dot_product > MIN_DOT_PRODUCT {
             Some(push_direction * PUNCH_FORCE)
         } else {
             None
