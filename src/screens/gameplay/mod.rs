@@ -4,10 +4,8 @@ use avian3d::prelude::*;
 use bevy::{
     anti_alias::fxaa::Fxaa,
     camera::Exposure,
-    core_pipeline::tonemapping::Tonemapping,
+    core_pipeline::{Skybox, tonemapping::Tonemapping},
     input::common_conditions::input_just_pressed,
-    light::{AtmosphereEnvironmentMapLight, SunDisk, VolumetricFog},
-    pbr::{Atmosphere, AtmosphereSettings, ScatteringMedium},
     post_process::bloom::Bloom,
     prelude::*,
     window::CursorOptions,
@@ -43,7 +41,7 @@ pub(super) fn plugin(app: &mut App) {
     app.add_plugins((
         PhysicsPlugins::default(),
         bevy_landmass::Landmass3dPlugin::default(),
-        bevy_landmass::debug::Landmass3dDebugPlugin::default(),
+        // bevy_landmass::debug::Landmass3dDebugPlugin::default(),
         bevy_rerecast::NavmeshPlugins::default(),
         avian_rerecast::AvianBackendPlugin::default(),
         LandmassRerecastPlugin::default(),
@@ -110,6 +108,17 @@ pub struct LevelAssets {
     #[dependency]
     props: Handle<Scene>,
 
+    #[dependency]
+    skybox: Handle<Image>,
+
+    #[dependency]
+    katana_idle: Handle<AnimationClip>,
+    #[dependency]
+    katana_swing: Handle<AnimationClip>,
+
+    #[dependency]
+    katana_scene: Handle<Scene>,
+
     // todo: move?
     #[dependency]
     hammerhead: Handle<Scene>,
@@ -124,6 +133,10 @@ impl FromWorld for LevelAssets {
             whoosh1: assets.load("audio/sound_effects/whoosh1.wav"),
             test_scene: assets.load(GltfAssetLabel::Scene(0).from_asset("models/scene.glb")),
             props: assets.load(GltfAssetLabel::Scene(0).from_asset("models/props.glb")),
+            skybox: assets.load("images/skybox.ktx2"),
+            katana_idle: assets.load(GltfAssetLabel::Animation(0).from_asset("models/katana.glb")),
+            katana_swing: assets.load(GltfAssetLabel::Animation(1).from_asset("models/katana.glb")),
+            katana_scene: assets.load(GltfAssetLabel::Scene(0).from_asset("models/katana.glb")),
             hammerhead: assets.load(GltfAssetLabel::Scene(0).from_asset("models/hammerhead.glb")),
         }
     }
@@ -148,7 +161,6 @@ fn spawn_level(
     camera: Single<Entity, With<Camera3d>>,
     mut cursor_options: Single<&mut CursorOptions>,
     mut generator: NavmeshGenerator,
-    mut scattering_mediums: ResMut<Assets<ScatteringMedium>>,
 ) {
     commands.insert_resource(NavmeshDone(false));
     let camera = *camera;
@@ -186,17 +198,11 @@ fn spawn_level(
     commands.entity(camera).insert((
         transform,
         CameraRotation(transform.rotation.x),
-        Atmosphere::earthlike(scattering_mediums.add(ScatteringMedium::default())),
-        AtmosphereSettings::default(),
-        Exposure {
-            ev100: Exposure::EV100_BLENDER,
+        Skybox {
+            image: level_assets.skybox.clone(),
+            brightness: 1000.0,
+            ..Default::default()
         },
-        Tonemapping::AcesFitted,
-        Bloom::NATURAL,
-        AtmosphereEnvironmentMapLight::default(),
-        VolumetricFog::default(),
-        Msaa::Off,
-        Fxaa::default(),
     ));
 
     let light = commands
@@ -206,7 +212,6 @@ fn spawn_level(
                 shadows_enabled: true,
                 ..default()
             },
-            SunDisk::default(),
             Transform::from_rotation(Quat::from_euler(
                 EulerRot::YXZ,
                 -35f32.to_radians(),

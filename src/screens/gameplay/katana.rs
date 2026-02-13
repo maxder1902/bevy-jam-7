@@ -4,9 +4,7 @@ use std::{f32::consts::PI, time::Duration};
 
 use bevy::{animation::RepeatAnimation, light::CascadeShadowConfigBuilder, prelude::*};
 
-use crate::screens::gameplay::player::Player;
-
-const KATANA_PATH: &str = "models/katana.glb";
+use crate::screens::gameplay::{LevelAssets, player::Player};
 
 #[derive(Resource)]
 pub struct Animations {
@@ -16,14 +14,14 @@ pub struct Animations {
 
 pub fn katana_setup(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
+    level_assets: Res<LevelAssets>,
     player: Single<Entity, With<Camera3d>>,
 ) {
     // Build the animation graph
     let (graph, node_indices) = AnimationGraph::from_clips([
-        asset_server.load(GltfAssetLabel::Animation(0).from_asset(KATANA_PATH)), // idle
-        asset_server.load(GltfAssetLabel::Animation(1).from_asset(KATANA_PATH)), // r_swing
+        level_assets.katana_idle.clone(),
+        level_assets.katana_swing.clone(),
     ]);
 
     // Keep our animation graph in a Resource so that it can be inserted onto
@@ -36,7 +34,7 @@ pub fn katana_setup(
 
     commands.spawn((
         Name::new("Katana"),
-        SceneRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(KATANA_PATH))),
+        SceneRoot(level_assets.katana_scene.clone()),
         Transform::from_translation(Vec3::new(-0.1, -0.8, -1.4))
             .with_rotation(Quat::from_rotation_y(0.05))
             .with_scale(Vec3::splat(0.8)),
