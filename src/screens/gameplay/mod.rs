@@ -22,12 +22,20 @@ use crate::{
     Pause,
     asset_tracking::LoadResource,
     menus::Menu,
-    screens::{Screen, gameplay::player::Player, set_cursor_grab},
+    screens::{
+        Screen,
+        gameplay::{
+            katana::{katana_animation, katana_setup, poor_setup_for_katana_animations},
+            player::Player,
+        },
+        set_cursor_grab,
+    },
 };
 
 mod character_controller;
 mod checkpoints;
 mod enemy;
+mod katana;
 mod player;
 
 #[derive(Component)]
@@ -46,7 +54,10 @@ pub(super) fn plugin(app: &mut App) {
         checkpoints::CheckpointPlugin,
     ));
     app.load_resource::<LevelAssets>();
-    app.add_systems(OnEnter(Screen::Gameplay), spawn_level);
+    app.add_systems(
+        OnEnter(Screen::Gameplay),
+        (spawn_level, katana_setup).chain(),
+    );
     app.add_systems(
         OnExit(Screen::Gameplay),
         |mut commands: Commands, camera: Single<Entity, With<Camera3d>>| {
@@ -81,6 +92,10 @@ pub(super) fn plugin(app: &mut App) {
         update_sun.run_if(in_state(Screen::Gameplay).and(in_state(Pause(false)))),
     );
     app.add_observer(handle_navmesh_ready);
+    app.add_systems(
+        Update,
+        (poor_setup_for_katana_animations, katana_animation).run_if(in_state(Screen::Gameplay)),
+    );
 }
 
 #[derive(Resource, Asset, Clone, Reflect)]
