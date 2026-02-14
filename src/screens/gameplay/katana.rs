@@ -49,7 +49,12 @@ pub fn poor_setup_for_katana_animations(
     mut commands: Commands,
     animations: Res<Animations>,
     mut players: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+    mut done: Local<bool>,
 ) {
+    if *done {
+        return;
+    }
+
     for (entity, mut player) in &mut players {
         let mut transitions = AnimationTransitions::new();
 
@@ -65,6 +70,7 @@ pub fn poor_setup_for_katana_animations(
             .entity(entity)
             .insert(AnimationGraphHandle(animations.graph_handle.clone()))
             .insert(transitions);
+        *done = true;
     }
 }
 
@@ -72,12 +78,8 @@ pub fn katana_animation(
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
     animations: Res<Animations>,
-    mut done: Local<bool>,
+    mut non_idle: Local<bool>,
 ) {
-    if *done {
-        return;
-    }
-
     for (mut player, mut transitions) in &mut animation_players {
         if mouse_input.just_pressed(MouseButton::Left) {
             transitions
@@ -87,9 +89,11 @@ pub fn katana_animation(
                     Duration::from_millis(60),
                 )
                 .set_speed(1.3);
+            *non_idle = true;
         }
 
         if player.all_finished() {
+            *non_idle = false;
             transitions
                 .play(
                     &mut player,
@@ -99,5 +103,4 @@ pub fn katana_animation(
                 .repeat();
         }
     }
-    *done = true;
 }
