@@ -247,10 +247,10 @@ fn spawn_level(
         pos: Isometry3d::from_translation(vec3(0.0, 0.0, 5.0)),
         parent: Some(level),
     });
-    commands.queue(enemy::EnemySpawnCmd {
-        pos: Isometry3d::from_translation(vec3(4.0, 0.0, 5.0)),
-        parent: Some(level),
-    });
+    // commands.queue(enemy::EnemySpawnCmd {
+    //     pos: Isometry3d::from_translation(vec3(4.0, 0.0, 5.0)),
+    //     parent: Some(level),
+    // });
 }
 
 fn unpause(mut next_pause: ResMut<NextState<Pause>>) {
@@ -291,8 +291,11 @@ fn generate_navmesh(
     if navmesh_done.0 {
         return;
     }
+    info!("generating navmesh...");
 
+    let mut count = 0;
     for island in &island {
+        count += 1;
         generator.regenerate(
             &island.0,
             NavmeshSettings {
@@ -301,12 +304,15 @@ fn generate_navmesh(
             },
         );
     }
+
+    info!("regenerated for {count} islands");
 }
 
 #[derive(Resource)]
 struct NavmeshDone(bool);
 
 fn handle_navmesh_ready(_: On<NavmeshReady>, mut navmesh_done: ResMut<NavmeshDone>) {
+    info!("navmesh ready");
     navmesh_done.0 = true;
 }
 

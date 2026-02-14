@@ -28,10 +28,9 @@ impl HammerheadAssets {
         Self {
             scene: assets.load(GltfAssetLabel::Scene(0).from_asset(HAMMERHEAD)),
             animations: vec![
-                // asset_server.load(GltfAssetLabel::Animation(2).from_asset(HAMMERHEAD)),
-                assets.load(GltfAssetLabel::Animation(0).from_asset(HAMMERHEAD)),
-                assets.load(GltfAssetLabel::Animation(1).from_asset(HAMMERHEAD)),
-                assets.load(GltfAssetLabel::Animation(2).from_asset(HAMMERHEAD)),
+                assets.load(GltfAssetLabel::Animation(0).from_asset(HAMMERHEAD)), // attack
+                assets.load(GltfAssetLabel::Animation(1).from_asset(HAMMERHEAD)), // idle
+                assets.load(GltfAssetLabel::Animation(2).from_asset(HAMMERHEAD)), // run
                 assets.load(GltfAssetLabel::Animation(1).from_asset("models/hammerhead walks.glb")),
             ],
         }
@@ -44,21 +43,15 @@ struct HammerheadAnimations {
     graph_handle: Handle<AnimationGraph>,
 }
 
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+struct Hammerhead;
+
 fn setup(
     mut commands: Commands,
     level_assets: Res<LevelAssets>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
-    commands.spawn(SceneRoot(level_assets.hammerhead.scene.clone()));
-
-    commands.spawn((
-        Transform::from_isometry(Isometry3d {
-            rotation: Quat::from_rotation_y(PI),
-            translation: Vec3A::new(0.0, 1.0, 2.0),
-        }),
-        SceneRoot(level_assets.hammerhead.scene.clone()),
-    ));
-
     // Build the animation graph
     let (graph, node_indices) =
         AnimationGraph::from_clips(level_assets.hammerhead.animations.clone());
@@ -96,7 +89,7 @@ fn setup(
 fn setup_scene_once_loaded(
     mut commands: Commands,
     animations: Res<HammerheadAnimations>,
-    mut players: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
+    mut players: Query<(Entity, &mut AnimationPlayer), (Added<AnimationPlayer>, With<Hammerhead>)>,
 ) {
     for (entity, mut player) in &mut players {
         info!("setting up scene once loaded...");
@@ -120,7 +113,10 @@ fn setup_scene_once_loaded(
 
 fn keyboard_control(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    mut animation_players: Query<
+        (&mut AnimationPlayer, &mut AnimationTransitions),
+        With<Hammerhead>,
+    >,
     animations: Res<HammerheadAnimations>,
     mut current_animation: Local<usize>,
 ) {
