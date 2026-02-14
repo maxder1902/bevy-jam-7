@@ -11,14 +11,7 @@ use crate::screens::gameplay::LevelAssets;
 
 pub struct EnemyPlugin;
 
-// FIXME: placeholder to test punching
-#[deprecated]
-fn enemy_gravity() -> Vec3 {
-    Vec3::NEG_Y * 9.81
-}
-
-// FIXME: placeholder to test punching
-#[deprecated]
+const ENEMY_GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
 const MAX_SLOPE_ANGLE: f32 = 0.1;
 
 impl Plugin for EnemyPlugin {
@@ -57,7 +50,9 @@ impl Plugin for EnemyPlugin {
 }
 
 #[derive(Component)]
-pub struct Enemy;
+pub struct Enemy {
+    pub health: f32, // 0.0..1.0
+}
 
 #[derive(Component)]
 pub struct Knockback {
@@ -70,7 +65,7 @@ pub struct Knockback {
 pub struct Grounded;
 
 pub struct EnemySpawnCmd {
-    pub pos: Isometry3d,
+    pub transform: Transform,
     pub parent: Option<Entity>,
 }
 
@@ -84,18 +79,17 @@ fn spawn_enemy(
     In(args): In<EnemySpawnCmd>,
     mut c: Commands,
     level_assets: Res<LevelAssets>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     navmesh_ref: Res<super::NavmeshArchipelagoHolder>,
 ) {
-    let enemy_collider = Collider::capsule(0.4, 1.0);
+    let enemy_collider = Collider::capsule(0.45, 1.3);
     let mut caster_shape = enemy_collider.clone();
     caster_shape.set_scale(Vec3::ONE * 0.99, 10);
 
     let mut enemy = c.spawn((
         Name::new("Enemy"),
-        Enemy,
+        Enemy { health: 1.0 },
         SceneRoot(level_assets.hammerhead.scene.clone()),
-        Transform::from_isometry(args.pos),
+        args.transform,
         Visibility::Inherited,
         RigidBody::Kinematic,
         Agent3dBundle {
@@ -110,18 +104,12 @@ fn spawn_enemy(
         AgentTarget3d::None,
         ShapeCaster::new(
             caster_shape,
-            Vec3::new(0.0, 0.9, 0.0),
+            Vec3::new(0.0, 1.17, 0.0),
             Quaternion::default(),
             Dir3::NEG_Y,
         )
         .with_max_distance(0.5),
-        Children::spawn_one((
-            // todo: remove/reuse mesh
-            // Mesh3d(meshes.add(Capsule3d::new(0.4, 1.0))),
-            MeshMaterial3d(materials.add(Color::srgb_u8(255, 144, 124))),
-            enemy_collider,
-            Transform::from_xyz(0.0, 0.9, 0.0),
-        )),
+        Children::spawn_one((enemy_collider, Transform::from_xyz(0.0, 1.17, 0.0))),
     ));
 
     if let Some(parent) = args.parent {
@@ -144,7 +132,7 @@ fn enemy_track_nearby_player(
     players: Query<(Entity, &Transform), With<super::Player>>,
     archipelago: Query<&Archipelago3d>,
 ) {
-    const DETECTION_RANGE: f32 = 5.0;
+    const DETECTION_RANGE: f32 = 15.0;
 
     const POINT_SAMPLE_CONFIG: PointSampleDistance3d = PointSampleDistance3d {
         animation_link_max_vertical_distance: 50.,
@@ -212,11 +200,11 @@ fn enemy_move_toward_target(
 
 fn apply_knockback(
     mut commands: Commands,
-    mut enemies: Query<(Entity, &mut LinearVelocity, &mut Knockback), With<Enemy>>,
+    mut enemies: Query<(Entity, &mut LinearVelocity, &mut Knockback)>,
     time: Res<Time>,
 ) {
     for (entity, mut linear_velocity, mut knockback) in enemies.iter_mut() {
-        knockback.velocity += enemy_gravity() * time.delta_secs();
+        knockback.velocity += ENEMY_GRAVITY * time.delta_secs();
         linear_velocity.0 = knockback.velocity;
         knockback.remaining_time -= time.delta_secs();
 
@@ -256,7 +244,7 @@ fn apply_gravity(
     mut enemies: Query<&mut LinearVelocity, (With<Enemy>, Without<Knockback>, Without<Grounded>)>,
 ) {
     for mut linear_velocity in enemies.iter_mut() {
-        linear_velocity.0 += enemy_gravity() * time.delta_secs();
+        linear_velocity.0 += ENEMY_GRAVITY * time.delta_secs();
     }
 }
 
