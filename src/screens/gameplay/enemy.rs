@@ -25,9 +25,9 @@ impl Plugin for EnemyPlugin {
             (
                 enemy_track_nearby_player,
                 enemy_move_toward_target,
-                apply_knockback,
+                // apply_knockback,
                 update_grounded,
-                apply_gravity,
+                // apply_gravity,
             )
                 .chain()
                 .run_if(in_state(Screen::Gameplay)),
@@ -195,21 +195,21 @@ fn enemy_move_toward_target(
     }
 }
 
-fn apply_knockback(
-    mut commands: Commands,
-    mut enemies: Query<(Entity, &mut LinearVelocity, &mut Knockback), With<Enemy>>,
-    time: Res<Time>,
-) {
-    for (entity, mut linear_velocity, mut knockback) in enemies.iter_mut() {
-        knockback.velocity += enemy_gravity() * time.delta_secs();
-        linear_velocity.0 = knockback.velocity;
-        knockback.remaining_time -= time.delta_secs();
+// fn apply_knockback(
+//     mut commands: Commands,
+//     mut enemies: Query<(Entity, &mut LinearVelocity, &mut Knockback), With<Enemy>>,
+//     time: Res<Time>,
+// ) {
+//     for (entity, mut linear_velocity, mut knockback) in enemies.iter_mut() {
+//         knockback.velocity += enemy_gravity() * time.delta_secs();
+//         linear_velocity.0 = knockback.velocity;
+//         knockback.remaining_time -= time.delta_secs();
 
-        if knockback.remaining_time <= 0.0 {
-            commands.entity(entity).remove::<Knockback>();
-        }
-    }
-}
+//         if knockback.remaining_time <= 0.0 {
+//             commands.entity(entity).remove::<Knockback>();
+//         }
+//     }
+// }
 
 /// Updates the [`Grounded`] status for character controllers.
 fn update_grounded(
@@ -236,14 +236,17 @@ fn update_grounded(
     }
 }
 
-fn apply_gravity(
-    time: Res<Time>,
-    mut enemies: Query<&mut LinearVelocity, (With<Enemy>, Without<Knockback>, Without<Grounded>)>,
-) {
-    for mut linear_velocity in enemies.iter_mut() {
-        linear_velocity.0 += enemy_gravity() * time.delta_secs();
-    }
-}
+// fn apply_gravity(
+//     time: Res<Time>,
+//     mut enemies: Query<(&RigidBody, &mut LinearVelocity), (With<Enemy>, Without<Knockback>, Without<Grounded>)>,
+// ) {
+//     for (rigid_body, mut linear_velocity) in enemies.iter_mut() {
+//         if rigid_body.is_dynamic() {
+//             linear_velocity.0 += enemy_gravity() * time.delta_secs();
+//         }
+//     }
+// }
+
 
 /// Kinematic bodies do not get pushed by collisions by default,
 /// so it needs to be done manually.
