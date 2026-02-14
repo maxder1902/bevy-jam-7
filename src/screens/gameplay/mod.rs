@@ -31,6 +31,7 @@ use crate::{
 mod character_controller;
 mod checkpoints;
 mod enemy;
+mod hammerhead;
 mod katana;
 mod player;
 
@@ -48,6 +49,7 @@ pub(super) fn plugin(app: &mut App) {
         character_controller::CharacterControllerPlugin,
         enemy::EnemyPlugin,
         checkpoints::CheckpointPlugin,
+        hammerhead::hammerhead,
     ));
     app.load_resource::<LevelAssets>();
     app.add_systems(
