@@ -31,6 +31,7 @@ impl HammerheadAssets {
                 // asset_server.load(GltfAssetLabel::Animation(2).from_asset(HAMMERHEAD)),
                 assets.load(GltfAssetLabel::Animation(0).from_asset(HAMMERHEAD)),
                 assets.load(GltfAssetLabel::Animation(1).from_asset(HAMMERHEAD)),
+                assets.load(GltfAssetLabel::Animation(2).from_asset(HAMMERHEAD)),
                 assets.load(GltfAssetLabel::Animation(1).from_asset("models/hammerhead walks.glb")),
             ],
         }
@@ -45,12 +46,17 @@ struct HammerheadAnimations {
 
 fn setup(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     level_assets: Res<LevelAssets>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
-    commands.spawn(SceneRoot(
-        asset_server.load(GltfAssetLabel::Scene(0).from_asset(HAMMERHEAD)),
+    commands.spawn(SceneRoot(level_assets.hammerhead.scene.clone()));
+
+    commands.spawn((
+        Transform::from_isometry(Isometry3d {
+            rotation: Quat::from_rotation_y(PI),
+            translation: Vec3A::new(0.0, 1.0, 2.0),
+        }),
+        SceneRoot(level_assets.hammerhead.scene.clone()),
     ));
 
     // Build the animation graph
