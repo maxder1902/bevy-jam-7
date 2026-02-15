@@ -23,18 +23,31 @@ impl Plugin for EnemyPlugin {
             (
                 enemy_track_nearby_player,
                 enemy_move_toward_target,
+                apply_knockback,
                 update_grounded,
-                apply_gravity_system,
+                apply_gravity,
                 print_desired_velocity.run_if(on_timer(Duration::from_millis(300))),
             )
                 .chain()
                 .run_if(in_state(Screen::Gameplay)),
         );
 
-        // app.add_systems(
-        //     PhysicsSchedule,
-        //     enemy_collision.in_set(NarrowPhaseSystems::Last),
-        // );
+        // Run collision handling after collision detection
+        app.add_systems(
+            PhysicsSchedule,
+            enemy_collision.in_set(NarrowPhaseSystems::Last),
+        );
+
+        // #[cfg(feature = "dev")]
+        // {
+        //     app.add_systems(
+        //         Update,
+        //         print_desired_velocity.run_if(bevy::input::common_conditions::input_toggle_active(
+        //             false,
+        //             crate::dev_tools::TOGGLE_KEY,
+        //         )),
+        //     );
+        // }
     }
 }
 
@@ -143,8 +156,13 @@ fn enemy_track_nearby_player(
         vertical_preference_ratio: 1.0,
     };
 
-    let Some(archipelago) = archipelago.iter().next() else { return; };
-    let Some((player_entity, player_transform)) = players.iter().next() else { return; };
+    let Some(archipelago) = archipelago.iter().next() else {
+        return;
+    };
+
+    let Some((player_entity, player_transform)) = players.iter().next() else {
+        return;
+    };
 
     for (enemy_transform, mut target) in enemies.iter_mut() {
         let distance = enemy_transform
@@ -152,7 +170,9 @@ fn enemy_track_nearby_player(
             .distance(player_transform.translation);
 
         if distance <= DETECTION_RANGE {
-            if let Ok(point) = archipelago.sample_point(player_transform.translation, &POINT_SAMPLE_CONFIG) {
+            if let Ok(point) =
+                archipelago.sample_point(player_transform.translation, &POINT_SAMPLE_CONFIG)
+            {
                 *target = AgentTarget3d::Point(point.point());
             } else {
                 *target = AgentTarget3d::Entity(player_entity);
@@ -165,7 +185,13 @@ fn enemy_track_nearby_player(
 
 fn enemy_move_toward_target(
     mut enemies: Query<
-        (&AgentState, &AgentTarget3d, &AgentDesiredVelocity3d, &mut LinearVelocity, &mut Rotation),
+        (
+            &AgentState,
+            &AgentTarget3d,
+            &AgentDesiredVelocity3d,
+            &mut LinearVelocity,
+            &mut Rotation,
+        ),
         (With<Enemy>, Without<Knockback>),
     >,
 ) {
@@ -173,11 +199,15 @@ fn enemy_move_toward_target(
         if *state != AgentState::Moving {
             linear_velocity.x = 0.0;
             linear_velocity.z = 0.0;
-            continue;
+            return;
         }
         if !matches!(target, AgentTarget3d::None) {
             linear_velocity.0 = desired_velocity.velocity();
-            *rotation = Quat::from_rotation_y(PI / 2.0 - desired_velocity.velocity().xz().to_angle()).into();
+
+            // jumpy
+            *rotation =
+                Quat::from_rotation_y(PI / 2.0 - desired_velocity.velocity().xz().to_angle())
+                    .into();
         }
     }
 }
@@ -191,7 +221,6 @@ fn apply_knockback(
     mut enemies: Query<(Entity, &mut LinearVelocity, &mut Knockback)>,
 >>>>>>> 734e74c (katana attack, closes #44, #46, #48)
     time: Res<Time>,
-    mut enemies: Query<(&RigidBody, &mut LinearVelocity), (With<Enemy>, Without<Knockback>, Without<Grounded>)>,
 ) {
 <<<<<<< HEAD
     for (rigid_body, mut linear_velocity) in enemies.iter_mut() {
@@ -210,13 +239,16 @@ fn apply_knockback(
     }
 }
 
+/// Updates the [`Grounded`] status for character controllers.
 fn update_grounded(
     mut commands: Commands,
     mut query: Query<(Entity, &ShapeHits, &Rotation), (With<Enemy>, Without<Knockback>)>,
 ) {
     for (entity, hits, rotation) in &mut query {
+        // The character is grounded if the shape caster has a hit with a normal
+        // that isn't too steep.
         let is_grounded = hits.iter().any(|hit| {
-            (rotation * -hit.normal2).angle_between(Vector::Y).abs() <= 0.1
+            (rotation * -hit.normal2).angle_between(Vector::Y).abs() <= 35f32.to_radians()
         });
         if is_grounded {
             commands.entity(entity).insert(Grounded);
