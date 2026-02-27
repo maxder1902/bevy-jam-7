@@ -53,6 +53,10 @@ bevy_mesh = "0.18.0"
 [target.wasm32-unknown-unknown.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
+[[bin]]
+name = "bevy-jam-7"
+path = "src/main.rs"
+
 [features]
 # Default to a native dev build.
 default = ["dev_native"]
