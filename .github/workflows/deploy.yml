@@ -36,11 +36,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install bevy_cli
-        run: cargo install --git https://github.com/TheBevyFlock/bevy_cli --locked bevy_cli
+      - name: Install dependencies
+        run: |
+          cargo install --git https://github.com/TheBevyFlock/bevy_cli --locked bevy_cli
+          cargo install wasm-bindgen-cli
+          sudo apt-get install -y binaryen
 
       - name: Build for web
-        run: bevy build --release web --yes
+        run: bevy build --release web --bundle
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
