@@ -4,4 +4,3 @@
 .cargo/config.toml
 **/*.blend1
 /docs/.obsidian
-Cargo.lock
