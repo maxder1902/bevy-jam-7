@@ -37,7 +37,9 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Install bevy_cli
-        run: cargo install --git https://github.com/bevyengine/bevy_cli bevy_cli
+        run: |
+          git clone https://github.com/bevyengine/bevy_cli.git
+          cargo install --path bevy_cli/bevy_cli
 
       - name: Build for web
         run: bevy build web --release
