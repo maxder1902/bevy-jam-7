@@ -1,5 +1,7 @@
 # Rust builds
 /target
+# Trunk build output (use GitHub Pages artifact instead)
+/dist
 # This file contains environment-specific configuration like linker settings
 .cargo/config.toml
 **/*.blend1

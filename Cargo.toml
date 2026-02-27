@@ -52,7 +52,7 @@ name = "bevy-jam-7"
 path = "src/main.rs"
 
 [features]
-default = ["dev_native"]
+default = ["dev"]
 dev = [
     "bevy/dynamic_linking",
     "bevy/bevy_dev_tools",
