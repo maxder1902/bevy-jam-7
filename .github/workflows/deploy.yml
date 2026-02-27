@@ -40,7 +40,7 @@ jobs:
         run: cargo install --git https://github.com/TheBevyFlock/bevy_cli --locked bevy_cli
 
       - name: Build for web
-        run: bevy build web --release
+        run: bevy build web --profile web-release
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
