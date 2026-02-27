@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           cargo install --git https://github.com/TheBevyFlock/bevy_cli --locked bevy_cli
-          cargo install wasm-bindgen-cli
+          cargo install wasm-bindgen-cli --version 0.2.113
           sudo apt-get install -y binaryen
 
       - name: Build for web
