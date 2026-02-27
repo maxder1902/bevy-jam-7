@@ -1,4 +1,5 @@
 use avian3d::prelude::*;
+use super::flower_capsule::{FlowerCapsule, damage_capsule, CapsuleTracker, ShardOwner};
 use bevy::{
     ecs::query::Has, input::mouse::MouseMotion, prelude::*, transform::TransformSystems,
     window::PrimaryWindow,
@@ -35,12 +36,12 @@ impl Plugin for CharacterControllerPlugin {
                     gamepad_input,
                     update_grounded,
                     apply_movement_damping,
-                    // ray_cast,
                 )
                     .chain()
                     .in_set(PausableSystems),
             )
-            .add_systems(FixedUpdate, (movement, attack).in_set(PausableSystems))
+            .add_systems(FixedUpdate, movement.in_set(PausableSystems))
+            .add_systems(FixedUpdate, attack.in_set(PausableSystems))
             .add_systems(
                 PostUpdate,
                 update_camera_rotation.before(TransformSystems::Propagate),
@@ -61,7 +62,6 @@ pub enum AttackAction {
     Punch(Dir3),
 }
 
-// Camera x rotation
 #[derive(Component)]
 pub struct CameraRotation(pub f32);
 
@@ -102,12 +102,7 @@ pub struct MovementBundle {
 }
 
 impl MovementBundle {
-    pub const fn new(
-        acceleration: f32,
-        damping: f32,
-        jump_impulse: f32,
-        max_slope_angle: f32,
-    ) -> Self {
+    pub const fn new(acceleration: f32, damping: f32, jump_impulse: f32, max_slope_angle: f32) -> Self {
         Self {
             acceleration: MovementAcceleration(acceleration),
             damping: MovementDampingFactor(damping),
@@ -127,30 +122,18 @@ impl CharacterControllerBundle {
     pub fn new(collider: Collider) -> Self {
         let mut caster_shape = collider.clone();
         caster_shape.set_scale(Vec3::ONE * 0.99, 10);
-
         Self {
             character_controller: CharacterController,
             body: RigidBody::Dynamic,
-            ground_caster: ShapeCaster::new(
-                caster_shape,
-                Vec3::Y * 0.9,
-                Quat::default(),
-                Dir3::NEG_Y,
-            )
-            .with_max_distance(0.2)
-            .with_max_hits(5),
+            ground_caster: ShapeCaster::new(caster_shape, Vec3::Y * 0.9, Quat::default(), Dir3::NEG_Y)
+                .with_max_distance(0.2)
+                .with_max_hits(5),
             locked_axes: LockedAxes::ROTATION_LOCKED,
             movement: MovementBundle::default(),
         }
     }
 
-    pub fn with_movement(
-        mut self,
-        acceleration: f32,
-        damping: f32,
-        jump_impulse: f32,
-        max_slope_angle: f32,
-    ) -> Self {
+    pub fn with_movement(mut self, acceleration: f32, damping: f32, jump_impulse: f32, max_slope_angle: f32) -> Self {
         self.movement = MovementBundle::new(acceleration, damping, jump_impulse, max_slope_angle);
         self
     }
@@ -231,9 +214,7 @@ fn gamepad_input(
             gamepad.get(GamepadAxis::RightStickX),
             gamepad.get(GamepadAxis::RightStickY),
         ) {
-            movement_writer.write(MovementAction::Look(
-                Vec2::new(x, -y).clamp_length_max(1.0) * 10.0,
-            ));
+            movement_writer.write(MovementAction::Look(Vec2::new(x, -y).clamp_length_max(1.0) * 10.0));
         }
 
         if gamepad.just_pressed(GamepadButton::South) {
@@ -244,10 +225,7 @@ fn gamepad_input(
 
 fn update_grounded(
     mut commands: Commands,
-    mut query: Query<
-        (Entity, &ShapeHits, &Rotation, Option<&MaxSlopeAngle>),
-        With<CharacterController>,
-    >,
+    mut query: Query<(Entity, &ShapeHits, &Rotation, Option<&MaxSlopeAngle>), With<CharacterController>>,
     checkpoints: Query<Entity, With<Checkpoint>>,
     active_checkpoint: Query<Entity, With<ActiveCheckpoint>>,
 ) {
@@ -256,9 +234,7 @@ fn update_grounded(
             if let Ok(checkpoint) = checkpoints.get(hit.entity)
                 && let Ok(active_checkpoint) = active_checkpoint.single()
             {
-                commands
-                    .entity(active_checkpoint)
-                    .remove::<ActiveCheckpoint>();
+                commands.entity(active_checkpoint).remove::<ActiveCheckpoint>();
                 commands.entity(checkpoint).insert(ActiveCheckpoint);
             }
             if let Some(angle) = max_slope_angle {
@@ -286,10 +262,7 @@ fn movement(
         &mut Transform,
         Has<Grounded>,
     )>,
-    mut camera_rotation: Single<
-        &mut CameraRotation,
-        (With<Camera3d>, Without<MovementAcceleration>),
-    >,
+    mut camera_rotation: Single<&mut CameraRotation, (With<Camera3d>, Without<MovementAcceleration>)>,
     mut player: Single<&mut Player>,
     level: Single<Entity, With<Level>>,
     time: Res<Time<Fixed>>,
@@ -298,47 +271,33 @@ fn movement(
     mut sound_cooldown: Local<f32>,
 ) {
     for event in movement_reader.read() {
-        for (
-            movement_acceleration,
-            jump_impulse,
-            mut linear_velocity,
-            mut transform,
-            is_grounded,
-        ) in &mut controllers
-        {
+        for (movement_acceleration, jump_impulse, mut linear_velocity, mut transform, is_grounded) in &mut controllers {
             match event {
                 MovementAction::Move(direction, speed_multiplier) => {
                     let local_z = transform.rotation * Vec3::Z;
                     let forward = -Vec3::new(local_z.x, 0.0, local_z.z).normalize_or_zero();
                     let right = Vec3::new(local_z.z, 0.0, -local_z.x).normalize_or_zero();
                     let movement_direction = forward * direction.y + right * direction.x;
-                    linear_velocity.0 +=
-                        movement_direction * movement_acceleration.0 * speed_multiplier;
+                    linear_velocity.0 += movement_direction * movement_acceleration.0 * speed_multiplier;
 
-                    let length =
-                        movement_direction.length() * movement_acceleration.0 * speed_multiplier;
+                    let length = movement_direction.length() * movement_acceleration.0 * speed_multiplier;
                     if is_grounded && length > 0.05 && *sound_cooldown <= 0.0 {
+                        // stepping-stone para el suelo normal
                         commands.entity(*level).with_child(sound_effect(
-                            level_assets.step1.clone(),
-                            sample_effects!(LowPassNode {
-                                frequency: linear_velocity.length_squared() * 20.0,
-                            }),
+                            level_assets.step_stone.clone(),
+                            sample_effects!(LowPassNode { frequency: linear_velocity.length_squared() * 20.0 }),
                         ));
                         *sound_cooldown = 0.35 / length;
                     }
                 }
-                // SAME AS MOVE BUT WITH EXTRA Y VELOCITY
                 MovementAction::Dash(direction) => {
                     let local_z = transform.rotation * Vec3::Z;
                     let forward = -Vec3::new(local_z.x, 0.0, local_z.z).normalize_or_zero();
                     let right = Vec3::new(local_z.z, 0.0, -local_z.x).normalize_or_zero();
-                    linear_velocity.0.y = 0.0; // reset y velocity so dash is consistent even if you're falling
-                    let movement_direction =
-                        forward * direction.y + right * direction.x + Vec3::Y * 10.0;
+                    linear_velocity.0.y = 0.0;
+                    let movement_direction = forward * direction.y + right * direction.x + Vec3::Y * 10.0;
                     linear_velocity.0 += movement_direction * movement_acceleration.0 * 0.1;
-                    commands
-                        .entity(*level)
-                        .with_child(sound_effect(level_assets.whoosh1.clone(), ()));
+                    commands.entity(*level).with_child(sound_effect(level_assets.whoosh1.clone(), ()));
                 }
                 MovementAction::Look(direction) => {
                     let (mut yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
@@ -364,14 +323,10 @@ fn movement(
 }
 
 fn update_camera_rotation(
-    camera: Single<
-        (&CameraRotation, &mut Transform),
-        (With<Camera3d>, Without<CharacterController>),
-    >,
+    camera: Single<(&CameraRotation, &mut Transform), (With<Camera3d>, Without<CharacterController>)>,
     time: Res<Time>,
 ) {
     let (camera_rotation, mut camera_transform) = camera.into_inner();
-
     camera_transform.rotation = Quat::from_rotation_x(camera_rotation.0);
     camera_transform.rotate_local_z(time.elapsed_secs().sin() / 30.0);
 }
@@ -382,9 +337,12 @@ fn attack(
     player_transform: Single<&Transform, With<Player>>,
     mut punchables: Query<
         (&GlobalTransform, Forces),
-        (With<Collider>, Without<Player>, Without<Enemy>),
+        (With<Collider>, Without<Player>, Without<Enemy>, Without<FlowerCapsule>),
     >,
     mut enemies: Query<(Entity, &GlobalTransform, &mut Enemy)>,
+    mut capsules: Query<(Entity, &GlobalTransform, &mut FlowerCapsule)>,
+    shards: Query<(Entity, &ShardOwner)>,
+    mut tracker: ResMut<CapsuleTracker>,
     level_assets: Res<LevelAssets>,
     level: Single<Entity, With<Level>>,
 ) {
@@ -393,14 +351,11 @@ fn attack(
         player_transform: &Transform,
         punch_forward: &Dir3,
     ) -> Option<Vec3> {
-        const PUNCH_RANGE: f32 = 2.5;
+        const PUNCH_RANGE: f32 = 4.5;
         const PUNCH_FORCE: f32 = 7.0;
-        // Right now we only care it's in player forward direction
-        // Consider other ways(maybe ray-cast?) to check if `Punchable` is there
         const MIN_DOT_PRODUCT: f32 = 0.75;
 
         let target_pos = target_transform.translation();
-
         let to_object_from_player = target_pos - player_transform.translation;
         let distance = to_object_from_player.length();
 
@@ -422,34 +377,65 @@ fn attack(
     for event in attack_reader.read() {
         match event {
             AttackAction::Punch(punch_forward) => {
+                // Objetos físicos normales
                 for (transform, mut forces) in punchables.iter_mut() {
-                    if let Some(impulse) =
-                        punch_impulse(transform, *player_transform, punch_forward)
-                    {
+                    if let Some(impulse) = punch_impulse(transform, *player_transform, punch_forward) {
                         forces.apply_linear_impulse(impulse);
                     }
                 }
 
+                // Enemigos — sonido diferente según si es primer hit o hit final
+                let mut hit_something = false;
                 for (entity, transform, mut enemy) in enemies.iter_mut() {
-                    if let Some(impulse) =
-                        punch_impulse(transform, *player_transform, punch_forward)
-                    {
-                        enemy.health -= 0.25; // quarter of the health, maybe change this
-                        if enemy.health > 0.0 {
-                            commands.entity(entity).insert(Knockback {
-                                velocity: impulse,
-                                remaining_time: 0.3,
-                            });
-                        } else {
-                            commands.entity(entity).despawn();
+                    if let Some(impulse) = punch_impulse(transform, *player_transform, punch_forward) {
+                        if enemy.health > 0 {
+                            enemy.health -= 1;
+                            hit_something = true;
+                            if enemy.health > 0 {
+                                // Primer hit — sword impact + knockback
+                                commands.entity(*level).with_child(sound_effect(
+                                    level_assets.hit_enemy_first.clone(),
+                                    (),
+                                ));
+                                commands.entity(entity).insert(Knockback {
+                                    velocity: impulse,
+                                    remaining_time: 0.3,
+                                });
+                            } else {
+                                // Hit final — sonido de muerte + despawn
+                                commands.entity(*level).with_child(sound_effect(
+                                    level_assets.hit_enemy_final.clone(),
+                                    (),
+                                ));
+                                commands.entity(entity).despawn();
+                            }
                         }
                     }
                 }
 
-                // TODO: punch sound effect
-                commands
-                    .entity(*level)
-                    .with_child(sound_effect(level_assets.whoosh1.clone(), ()));
+                // Cápsulas — sonido de cristal al golpear
+                for (entity, transform, mut capsule) in capsules.iter_mut() {
+                    if punch_impulse(transform, *player_transform, punch_forward).is_some() {
+                        hit_something = true;
+                        damage_capsule(
+                            &mut commands,
+                            entity,
+                            &mut capsule,
+                            &mut tracker,
+                            &shards,
+                            &level_assets,
+                            *level,
+                        );
+                    }
+                }
+
+                // Whoosh siempre al atacar (swing de espada)
+                commands.entity(*level).with_child(sound_effect(
+                    level_assets.whoosh1.clone(),
+                    (),
+                ));
+
+                let _ = hit_something; // suprime warning si no se usa
             }
         }
     }
@@ -472,7 +458,6 @@ fn spawn_something_punchable(
             Mass(5.0),
         ))
         .id();
-
     commands.entity(*level).add_child(cube);
 }
 
@@ -480,7 +465,7 @@ fn spawn_something_punchable(
 fn ray_cast(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    children: Query<(Entity, &ChildOf)>, // child because material is a child of the object in blender or smth
+    children: Query<(Entity, &ChildOf)>,
     player: Single<(Entity, &Transform), With<Player>>,
     camera: Single<&GlobalTransform, With<Camera3d>>,
     query: SpatialQuery,
@@ -500,19 +485,13 @@ fn ray_cast(
         if time.elapsed_secs() - *last_time >= 0.5
             && let Some((entity, _)) = children.iter().find(|(_, c)| c.0 == hit.entity)
         {
-            commands
-                .entity(entity)
-                .insert(MeshMaterial3d(materials.add(Color::srgb(
-                    rand::random(),
-                    rand::random(),
-                    rand::random(),
-                ))));
+            commands.entity(entity).insert(MeshMaterial3d(materials.add(Color::srgb(
+                rand::random(),
+                rand::random(),
+                rand::random(),
+            ))));
             *last_time = time.elapsed_secs();
         }
-        // info!(
-        //     "Hit entity {:?} at distance of {:?} with normal {:?}",
-        //     hit.entity, hit.distance, hit.normal
-        // );
     } else {
         *last_time = time.elapsed_secs() - 0.5;
     }

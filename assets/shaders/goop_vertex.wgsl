@@ -92,9 +92,9 @@ fn vertex(in: Vertex) -> VertexOutput {
 #ifdef VERTEX_TANGENTS
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(world_from_local, vec4f(curr_tangent, 1.0), in.instance_index);
 #endif
+#ifdef VERTEX_UVS
     out.uv = in.uv;
+#endif
     out.instance_index = in.instance_index;
-
     return out;
 }
-

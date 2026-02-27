@@ -27,6 +27,7 @@ use crate::{
             hammerhead::HammerheadAssets,
             katana::{katana_animation, katana_setup, poor_setup_for_katana_animations},
             player::Player,
+            events::SpawnAlarmClockEvent,
         },
         set_cursor_grab,
     },
@@ -38,6 +39,17 @@ mod enemy;
 mod hammerhead;
 mod katana;
 mod player;
+mod enemy_spawn;
+mod world_butterflies;
+mod spawn_enemy_waves;
+mod hide_colliders;
+mod hud;
+mod flower_capsule;
+mod fall_death;
+mod cloud_goop;
+mod alarm_clock;
+mod events;
+mod particle_system;
 
 #[derive(Component)]
 struct Level;
@@ -52,26 +64,42 @@ pub(super) fn plugin(app: &mut App) {
         LandmassRerecastPlugin::default(),
         character_controller::CharacterControllerPlugin,
         enemy::EnemyPlugin,
+        enemy_spawn::EnemySpawnPlugin,
+        world_butterflies::WorldButterfliesPlugin,
         checkpoints::CheckpointPlugin,
+        spawn_enemy_waves::WaveSpawnPlugin,
+        hide_colliders::HideCollidersPlugin,
         hammerhead::hammerhead,
+        hud::HudPlugin,
     ));
+
+    app.add_plugins((
+        flower_capsule::FlowerCapsulePlugin,
+        fall_death::FallDeathPlugin,
+        cloud_goop::CloudGoopPlugin,
+        alarm_clock::AlarmClockPlugin,
+        particle_system::ParticleSystemPlugin,
+    ));
+
     app.load_resource::<LevelAssets>();
     app.add_systems(
         OnEnter(Screen::Gameplay),
-        (spawn_level, katana_setup).chain(),
+        (setup_clock_spawn_resources, spawn_level, katana_setup).chain(),
     );
     app.add_systems(
         OnExit(Screen::Gameplay),
-        |mut commands: Commands, camera: Single<Entity, With<Camera3d>>| {
-            commands
-                .entity(*camera)
-                .remove::<Skybox>()
-                .despawn_children()
-                .remove_parent_in_place(); // make it so it's not despawned with the level
-        },
+        (
+            |mut commands: Commands, camera: Single<Entity, With<Camera3d>>| {
+                commands
+                    .entity(*camera)
+                    .remove::<Skybox>()
+                    .despawn_children()
+                    .remove_parent_in_place();
+            },
+            cleanup_clock_spawn_resources,
+        ),
     );
 
-    // Toggle pause on key press.
     app.add_systems(
         Update,
         (
@@ -89,12 +117,13 @@ pub(super) fn plugin(app: &mut App) {
         unpause.run_if(in_state(Screen::Gameplay)),
     );
 
-    // todo: system ordering is likely incorrect and use FIXED UPDATE here.
     app.add_systems(
         Update,
-        generate_navmesh.run_if(in_state(Screen::Gameplay)), //.run_if(input_just_pressed(KeyCode::Space)),
+        generate_navmesh.run_if(in_state(Screen::Gameplay)),
     );
+
     app.add_observer(handle_navmesh_ready);
+
     app.add_systems(
         Update,
         (
@@ -102,6 +131,10 @@ pub(super) fn plugin(app: &mut App) {
             katana_animation
                 .in_set(PausableSystems)
                 .run_if(in_state(Screen::Gameplay)),
+            debug_spawn_clock
+                .run_if(in_state(Screen::Gameplay)),
+            cache_clock_spawn_points.run_if(in_state(Screen::Gameplay)),
+            spawn_clocks_from_empties.run_if(in_state(Screen::Gameplay)),
         ),
     );
 }
@@ -111,10 +144,25 @@ pub(super) fn plugin(app: &mut App) {
 pub struct LevelAssets {
     #[dependency]
     music: Handle<AudioSample>,
+    // --- pasos ---
     #[dependency]
     step1: Handle<AudioSample>,
     #[dependency]
+    pub step_stone: Handle<AudioSample>,
+    #[dependency]
+    pub stepping_crystal: Handle<AudioSample>,
+    // --- combate enemigos ---
+    #[dependency]
+    pub hit_enemy_first: Handle<AudioSample>,
+    #[dependency]
+    pub hit_enemy_final: Handle<AudioSample>,
+    // --- cápsula ---
+    #[dependency]
+    pub capsule_damage: Handle<AudioSample>,
+    // --- armas / misc ---
+    #[dependency]
     whoosh1: Handle<AudioSample>,
+    // --- escenas / imágenes ---
     #[dependency]
     demo_level: Handle<Scene>,
     #[dependency]
@@ -127,6 +175,10 @@ pub struct LevelAssets {
     katana_scene: Handle<Scene>,
     #[dependency]
     hammerhead: HammerheadAssets,
+    #[dependency]
+    alarm_clock_scene: Handle<Scene>,
+    #[dependency]
+    time_field_scene: Handle<Scene>,
 }
 
 impl FromWorld for LevelAssets {
@@ -134,15 +186,27 @@ impl FromWorld for LevelAssets {
         let assets = world.resource::<AssetServer>();
         Self {
             music: assets.load("audio/music/Fluffing A Duck.ogg"),
+            // pasos
             step1: assets.load("audio/sound_effects/step1.wav"),
+            step_stone: assets.load("audio/sound_effects/step_stone_4.wav"),
+            stepping_crystal: assets.load("audio/sound_effects/stepping-crystal.wav"),
+            // combate
+            hit_enemy_first: assets.load("audio/sound_effects/first-hit-2-enemy.wav"),
+            hit_enemy_final: assets.load("audio/sound_effects/final-hit-2-enemy.wav"),
+            // cápsula
+            capsule_damage: assets.load("audio/sound_effects/capsule_damage.wav"),
+            // misc
             whoosh1: assets.load("audio/sound_effects/whoosh1.wav"),
+            // escenas
             demo_level: assets
                 .load(GltfAssetLabel::Scene(1).from_asset("models/Demo_level_heaven_sword.glb")),
             skybox: assets.load("images/skybox.ktx2"),
             katana_idle: assets.load(GltfAssetLabel::Animation(0).from_asset("models/katana.glb")),
             katana_swing: assets.load(GltfAssetLabel::Animation(1).from_asset("models/katana.glb")),
             katana_scene: assets.load(GltfAssetLabel::Scene(0).from_asset("models/katana.glb")),
+            alarm_clock_scene: assets.load(GltfAssetLabel::Scene(0).from_asset("models/alarm_clock.glb")),
             hammerhead: HammerheadAssets::load(assets),
+            time_field_scene: assets.load(GltfAssetLabel::Scene(0).from_asset("models/time_field.glb")),
         }
     }
 }
@@ -172,8 +236,6 @@ fn spawn_level(
 
     let archipelago_options: ArchipelagoOptions<ThreeD> =
         ArchipelagoOptions::from_agent_radius(0.5);
-    // archipelago_options.point_sample_distance.distance_above = -2.5;
-    // archipelago_options.point_sample_distance.distance_below = -2.5;
 
     let archipelago_id = commands.spawn(Archipelago3d::new(archipelago_options)).id();
 
@@ -198,7 +260,6 @@ fn spawn_level(
         ))
         .id();
 
-    // Set camera position and add atmosphere
     let transform = Transform::from_xyz(0.0, 0.8 + 0.9, 0.0);
     commands.entity(camera).insert((
         transform,
@@ -226,7 +287,7 @@ fn spawn_level(
         ))
         .id();
 
-    let level = commands
+    let _level = commands
         .spawn((
             Name::new("Level"),
             Transform::default(),
@@ -237,18 +298,6 @@ fn spawn_level(
         ))
         .add_children(&[player, light, music])
         .id();
-
-    // todo: remove
-    // commands.spawn(SceneRoot(level_assets.props.clone()));
-
-    commands.queue(enemy::EnemySpawnCmd {
-        transform: Transform::from_xyz(0.0, 0.0, 5.0).with_scale(Vec3::ONE * 1.3),
-        parent: Some(level),
-    });
-    // commands.queue(enemy::EnemySpawnCmd {
-    //     pos: Isometry3d::from_translation(vec3(4.0, 0.0, 5.0)),
-    //     parent: Some(level),
-    // });
 }
 
 fn unpause(mut next_pause: ResMut<NextState<Pause>>) {
@@ -281,55 +330,85 @@ fn close_menu(mut next_menu: ResMut<NextState<Menu>>) {
     next_menu.set(Menu::None);
 }
 
+#[derive(Resource)]
+struct NavmeshDone(bool);
+
+#[derive(Resource)]
+pub struct NavmeshArchipelagoHolder(pub Entity);
+
+#[derive(Resource, Default)]
+struct ClockSpawnPoints(Vec<Vec3>);
+
+#[derive(Resource)]
+struct ClockSpawnTimer(Timer);
+
 fn generate_navmesh(
     mut generator: NavmeshGenerator,
     island: Query<&NavMeshHandle3d, With<Island>>,
     navmesh_done: Res<NavmeshDone>,
 ) {
-    if navmesh_done.0 {
-        return;
-    }
-    info!("generating navmesh...");
-
+    if navmesh_done.0 { return; }
+    info!("Generating navmesh...");
     let mut count = 0;
     for island in &island {
         count += 1;
-        generator.regenerate(
-            &island.0,
-            NavmeshSettings {
-                agent_radius: 0.5,
-                ..default()
-            },
-        );
+        generator.regenerate(&island.0, NavmeshSettings { agent_radius: 0.5, ..default() });
     }
-
-    info!("regenerated for {count} islands");
+    info!("Started navmesh regen for {count} islands");
 }
 
-#[derive(Resource)]
-struct NavmeshDone(bool);
-
 fn handle_navmesh_ready(_: On<NavmeshReady>, mut navmesh_done: ResMut<NavmeshDone>) {
-    info!("navmesh ready");
+    info!("Navmesh ready!");
     navmesh_done.0 = true;
 }
 
-// fn regenrate_navmesh_on_collider_ready(
-//     _: On<ColliderConstructorReady>,
-//     mut generator: NavmeshGenerator,
-//     island: Query<&NavMeshHandle3d, With<Island>>,
-// ) {
-//     println!("Regenerating navmesh");
-//     for island in &island {
-//         generator.regenerate(
-//             &island.0,
-//             NavmeshSettings {
-//                 agent_radius: 0.5,
-//                 ..default()
-//             },
-//         );
-//     }
-// }
+fn debug_spawn_clock(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    level_assets: Res<LevelAssets>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyT) {
+        alarm_clock::spawn_alarm_clock(&mut commands, &level_assets, Vec3::new(0.0, 2.0, -3.0));
+        info!("DEBUG: Reloj spawneado!");
+    }
+}
 
-#[derive(Resource)]
-pub struct NavmeshArchipelagoHolder(pub Entity);
+fn setup_clock_spawn_resources(mut commands: Commands) {
+    commands.insert_resource(ClockSpawnPoints::default());
+    let mut timer = Timer::from_seconds(20.0, TimerMode::Repeating);
+    timer.set_elapsed(timer.duration());
+    commands.insert_resource(ClockSpawnTimer(timer));
+}
+
+fn cleanup_clock_spawn_resources(mut commands: Commands) {
+    commands.remove_resource::<ClockSpawnPoints>();
+    commands.remove_resource::<ClockSpawnTimer>();
+}
+
+fn cache_clock_spawn_points(
+    mut points: ResMut<ClockSpawnPoints>,
+    named: Query<(&Name, &GlobalTransform), Added<GlobalTransform>>,
+) {
+    for (name, transform) in named.iter() {
+        if name.as_str() == "SpawnAlarmClock" {
+            points.0.push(transform.translation());
+            info!("Spawn point de reloj registrado en {:?}", transform.translation());
+        }
+    }
+}
+
+fn spawn_clocks_from_empties(
+    mut commands: Commands,
+    level_assets: Res<LevelAssets>,
+    time: Res<Time>,
+    mut timer: ResMut<ClockSpawnTimer>,
+    points: Res<ClockSpawnPoints>,
+) {
+    if points.0.is_empty() { return; }
+    timer.0.tick(time.delta());
+    if !timer.0.just_finished() { return; }
+    for pos in points.0.iter().copied() {
+        alarm_clock::spawn_alarm_clock(&mut commands, &level_assets, pos);
+    }
+    info!("Relojes spawneados desde {} empties", points.0.len());
+}

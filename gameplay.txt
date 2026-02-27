@@ -1,0 +1,2444 @@
+========== DUMP GAMEPLAY RS FILES ==========
+
+============================================
+FILE: ./src/screens/gameplay/arena.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	use pub struct ArenaPlugin {}
+     4	
+     5	impl Plugin for ArenaPlugin {}
+     6	
+     7	fn countdown() {
+     8	
+     9	}
+    10	
+    11	fn arena_collapse() {
+    12	
+    13	}
+    14	
+    15	fn timer_logic() {
+    16	
+    17	}
+
+
+============================================
+FILE: ./src/screens/gameplay/character_controller.rs
+============================================
+     1	use avian3d::prelude::*;
+     2	use bevy::{
+     3	    ecs::query::Has, input::mouse::MouseMotion, prelude::*, transform::TransformSystems,
+     4	    window::PrimaryWindow,
+     5	};
+     6	use bevy_seedling::{prelude::LowPassNode, sample_effects};
+     7	
+     8	use super::enemy::{Enemy, Knockback};
+     9	use crate::{
+    10	    PausableSystems,
+    11	    audio::sound_effect,
+    12	    screens::gameplay::{
+    13	        Level, LevelAssets, Player,
+    14	        checkpoints::{ActiveCheckpoint, Checkpoint},
+    15	    },
+    16	};
+    17	
+    18	use crate::screens::Screen;
+    19	use crate::screens::gameplay::spawn_level;
+    20	
+    21	pub struct CharacterControllerPlugin;
+    22	
+    23	impl Plugin for CharacterControllerPlugin {
+    24	    fn build(&self, app: &mut App) {
+    25	        app.add_message::<MovementAction>()
+    26	            .add_message::<AttackAction>()
+    27	            .add_systems(
+    28	                OnEnter(Screen::Gameplay),
+    29	                spawn_something_punchable.after(spawn_level),
+    30	            )
+    31	            .add_systems(
+    32	                Update,
+    33	                (
+    34	                    kbm_input,
+    35	                    gamepad_input,
+    36	                    update_grounded,
+    37	                    apply_movement_damping,
+    38	                    // ray_cast,
+    39	                )
+    40	                    .chain()
+    41	                    .in_set(PausableSystems),
+    42	            )
+    43	            .add_systems(FixedUpdate, (movement, attack).in_set(PausableSystems))
+    44	            .add_systems(
+    45	                PostUpdate,
+    46	                update_camera_rotation.before(TransformSystems::Propagate),
+    47	            );
+    48	    }
+    49	}
+    50	
+    51	#[derive(Message)]
+    52	pub enum MovementAction {
+    53	    Move(Vec2, f32),
+    54	    Look(Vec2),
+    55	    Dash(Vec2),
+    56	    Jump,
+    57	}
+    58	
+    59	#[derive(Message)]
+    60	pub enum AttackAction {
+    61	    Punch(Dir3),
+    62	}
+    63	
+    64	// Camera x rotation
+    65	#[derive(Component)]
+    66	pub struct CameraRotation(pub f32);
+    67	
+    68	#[derive(Component)]
+    69	pub struct CharacterController;
+    70	
+    71	#[derive(Component)]
+    72	#[component(storage = "SparseSet")]
+    73	pub struct Grounded;
+    74	
+    75	#[derive(Component)]
+    76	pub struct MovementAcceleration(f32);
+    77	
+    78	#[derive(Component)]
+    79	pub struct MovementDampingFactor(f32);
+    80	
+    81	#[derive(Component)]
+    82	pub struct JumpImpulse(f32);
+    83	
+    84	#[derive(Component)]
+    85	pub struct MaxSlopeAngle(f32);
+    86	
+    87	#[derive(Bundle)]
+    88	pub struct CharacterControllerBundle {
+    89	    character_controller: CharacterController,
+    90	    body: RigidBody,
+    91	    ground_caster: ShapeCaster,
+    92	    locked_axes: LockedAxes,
+    93	    movement: MovementBundle,
+    94	}
+    95	
+    96	#[derive(Bundle)]
+    97	pub struct MovementBundle {
+    98	    acceleration: MovementAcceleration,
+    99	    damping: MovementDampingFactor,
+   100	    jump_impulse: JumpImpulse,
+   101	    max_slope_angle: MaxSlopeAngle,
+   102	}
+   103	
+   104	impl MovementBundle {
+   105	    pub const fn new(
+   106	        acceleration: f32,
+   107	        damping: f32,
+   108	        jump_impulse: f32,
+   109	        max_slope_angle: f32,
+   110	    ) -> Self {
+   111	        Self {
+   112	            acceleration: MovementAcceleration(acceleration),
+   113	            damping: MovementDampingFactor(damping),
+   114	            jump_impulse: JumpImpulse(jump_impulse),
+   115	            max_slope_angle: MaxSlopeAngle(max_slope_angle),
+   116	        }
+   117	    }
+   118	}
+   119	
+   120	impl Default for MovementBundle {
+   121	    fn default() -> Self {
+   122	        Self::new(30.0, 0.9, 7.0, std::f32::consts::PI * 0.45)
+   123	    }
+   124	}
+   125	
+   126	impl CharacterControllerBundle {
+   127	    pub fn new(collider: Collider) -> Self {
+   128	        let mut caster_shape = collider.clone();
+   129	        caster_shape.set_scale(Vec3::ONE * 0.99, 10);
+   130	
+   131	        Self {
+   132	            character_controller: CharacterController,
+   133	            body: RigidBody::Dynamic,
+   134	            ground_caster: ShapeCaster::new(
+   135	                caster_shape,
+   136	                Vec3::Y * 0.9,
+   137	                Quat::default(),
+   138	                Dir3::NEG_Y,
+   139	            )
+   140	            .with_max_distance(0.2)
+   141	            .with_max_hits(5),
+   142	            locked_axes: LockedAxes::ROTATION_LOCKED,
+   143	            movement: MovementBundle::default(),
+   144	        }
+   145	    }
+   146	
+   147	    pub fn with_movement(
+   148	        mut self,
+   149	        acceleration: f32,
+   150	        damping: f32,
+   151	        jump_impulse: f32,
+   152	        max_slope_angle: f32,
+   153	    ) -> Self {
+   154	        self.movement = MovementBundle::new(acceleration, damping, jump_impulse, max_slope_angle);
+   155	        self
+   156	    }
+   157	}
+   158	
+   159	fn kbm_input(
+   160	    mut movement_writer: MessageWriter<MovementAction>,
+   161	    mut attack_writer: MessageWriter<AttackAction>,
+   162	    mut mouse_input: MessageReader<MouseMotion>,
+   163	    player: Single<(&mut Player, &Transform)>,
+   164	    keyboard_input: Res<ButtonInput<KeyCode>>,
+   165	) {
+   166	    let (mut player, transform) = player.into_inner();
+   167	    let up = keyboard_input.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]);
+   168	    let down = keyboard_input.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]);
+   169	    let left = keyboard_input.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]);
+   170	    let right = keyboard_input.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]);
+   171	    let dash = keyboard_input.just_pressed(KeyCode::ShiftLeft);
+   172	    let punch = keyboard_input.just_pressed(KeyCode::KeyV);
+   173	
+   174	    #[cfg(feature = "dev")]
+   175	    let damage = keyboard_input.just_pressed(KeyCode::KeyH);
+   176	    #[cfg(feature = "dev")]
+   177	    if damage {
+   178	        player.health = (player.health - 0.25).max(0.0);
+   179	    }
+   180	
+   181	    let horizontal = right as i8 - left as i8;
+   182	    let vertical = up as i8 - down as i8;
+   183	    let direction = Vec2::new(horizontal as f32, vertical as f32).clamp_length_max(1.0);
+   184	
+   185	    if direction != Vec2::ZERO {
+   186	        if dash && player.dash_cooldown <= 0.0 {
+   187	            player.dash_cooldown = 1.5;
+   188	            movement_writer.write(MovementAction::Dash(direction * 500.0));
+   189	        } else {
+   190	            movement_writer.write(MovementAction::Move(direction, 1.0));
+   191	        }
+   192	    }
+   193	
+   194	    if keyboard_input.just_pressed(KeyCode::Space) {
+   195	        movement_writer.write(MovementAction::Jump);
+   196	    }
+   197	
+   198	    if punch {
+   199	        attack_writer.write(AttackAction::Punch(transform.forward()));
+   200	    }
+   201	
+   202	    for motion in mouse_input.read() {
+   203	        movement_writer.write(MovementAction::Look(motion.delta));
+   204	    }
+   205	}
+   206	
+   207	fn gamepad_input(
+   208	    mut movement_writer: MessageWriter<MovementAction>,
+   209	    mut player: Single<&mut Player>,
+   210	    gamepads: Query<&Gamepad>,
+   211	) {
+   212	    for gamepad in gamepads.iter() {
+   213	        if let (Some(x), Some(y)) = (
+   214	            gamepad.get(GamepadAxis::LeftStickX),
+   215	            gamepad.get(GamepadAxis::LeftStickY),
+   216	        ) {
+   217	            let direction = Vec2::new(x, y).clamp_length_max(1.0);
+   218	            let dash = gamepad.just_pressed(GamepadButton::East);
+   219	            if dash && player.dash_cooldown <= 0.0 {
+   220	                player.dash_cooldown = 1.5;
+   221	                movement_writer.write(MovementAction::Dash(direction * 200.0));
+   222	            } else {
+   223	                movement_writer.write(MovementAction::Move(
+   224	                    direction,
+   225	                    gamepad.get(GamepadButton::RightTrigger2).unwrap_or(0.0) * 0.5 + 1.0,
+   226	                ));
+   227	            }
+   228	        }
+   229	
+   230	        if let (Some(x), Some(y)) = (
+   231	            gamepad.get(GamepadAxis::RightStickX),
+   232	            gamepad.get(GamepadAxis::RightStickY),
+   233	        ) {
+   234	            movement_writer.write(MovementAction::Look(
+   235	                Vec2::new(x, -y).clamp_length_max(1.0) * 10.0,
+   236	            ));
+   237	        }
+   238	
+   239	        if gamepad.just_pressed(GamepadButton::South) {
+   240	            movement_writer.write(MovementAction::Jump);
+   241	        }
+   242	    }
+   243	}
+   244	
+   245	fn update_grounded(
+   246	    mut commands: Commands,
+   247	    mut query: Query<
+   248	        (Entity, &ShapeHits, &Rotation, Option<&MaxSlopeAngle>),
+   249	        With<CharacterController>,
+   250	    >,
+   251	    checkpoints: Query<Entity, With<Checkpoint>>,
+   252	    active_checkpoint: Query<Entity, With<ActiveCheckpoint>>,
+   253	) {
+   254	    for (entity, hits, rotation, max_slope_angle) in &mut query {
+   255	        let is_grounded = hits.iter().any(|hit| {
+   256	            if let Ok(checkpoint) = checkpoints.get(hit.entity)
+   257	                && let Ok(active_checkpoint) = active_checkpoint.single()
+   258	            {
+   259	                commands
+   260	                    .entity(active_checkpoint)
+   261	                    .remove::<ActiveCheckpoint>();
+   262	                commands.entity(checkpoint).insert(ActiveCheckpoint);
+   263	            }
+   264	            if let Some(angle) = max_slope_angle {
+   265	                (rotation * -hit.normal2).angle_between(Vec3::Y).abs() <= angle.0
+   266	            } else {
+   267	                true
+   268	            }
+   269	        });
+   270	
+   271	        if is_grounded {
+   272	            commands.entity(entity).insert(Grounded);
+   273	        } else {
+   274	            commands.entity(entity).remove::<Grounded>();
+   275	        }
+   276	    }
+   277	}
+   278	
+   279	fn movement(
+   280	    mut commands: Commands,
+   281	    mut movement_reader: MessageReader<MovementAction>,
+   282	    mut controllers: Query<(
+   283	        &MovementAcceleration,
+   284	        &JumpImpulse,
+   285	        &mut LinearVelocity,
+   286	        &mut Transform,
+   287	        Has<Grounded>,
+   288	    )>,
+   289	    mut camera_rotation: Single<
+   290	        &mut CameraRotation,
+   291	        (With<Camera3d>, Without<MovementAcceleration>),
+   292	    >,
+   293	    mut player: Single<&mut Player>,
+   294	    level: Single<Entity, With<Level>>,
+   295	    time: Res<Time<Fixed>>,
+   296	    window: Single<&Window, With<PrimaryWindow>>,
+   297	    level_assets: Res<LevelAssets>,
+   298	    mut sound_cooldown: Local<f32>,
+   299	) {
+   300	    for event in movement_reader.read() {
+   301	        for (
+   302	            movement_acceleration,
+   303	            jump_impulse,
+   304	            mut linear_velocity,
+   305	            mut transform,
+   306	            is_grounded,
+   307	        ) in &mut controllers
+   308	        {
+   309	            match event {
+   310	                MovementAction::Move(direction, speed_multiplier) => {
+   311	                    let local_z = transform.rotation * Vec3::Z;
+   312	                    let forward = -Vec3::new(local_z.x, 0.0, local_z.z).normalize_or_zero();
+   313	                    let right = Vec3::new(local_z.z, 0.0, -local_z.x).normalize_or_zero();
+   314	                    let movement_direction = forward * direction.y + right * direction.x;
+   315	                    linear_velocity.0 +=
+   316	                        movement_direction * movement_acceleration.0 * speed_multiplier;
+   317	
+   318	                    let length =
+   319	                        movement_direction.length() * movement_acceleration.0 * speed_multiplier;
+   320	                    if is_grounded && length > 0.05 && *sound_cooldown <= 0.0 {
+   321	                        commands.entity(*level).with_child(sound_effect(
+   322	                            level_assets.step1.clone(),
+   323	                            sample_effects!(LowPassNode {
+   324	                                frequency: linear_velocity.length_squared() * 20.0,
+   325	                            }),
+   326	                        ));
+   327	                        *sound_cooldown = 0.35 / length;
+   328	                    }
+   329	                }
+   330	                // SAME AS MOVE BUT WITH EXTRA Y VELOCITY
+   331	                MovementAction::Dash(direction) => {
+   332	                    let local_z = transform.rotation * Vec3::Z;
+   333	                    let forward = -Vec3::new(local_z.x, 0.0, local_z.z).normalize_or_zero();
+   334	                    let right = Vec3::new(local_z.z, 0.0, -local_z.x).normalize_or_zero();
+   335	                    linear_velocity.0.y = 0.0; // reset y velocity so dash is consistent even if you're falling
+   336	                    let movement_direction =
+   337	                        forward * direction.y + right * direction.x + Vec3::Y * 10.0;
+   338	                    linear_velocity.0 += movement_direction * movement_acceleration.0 * 0.1;
+   339	                    commands
+   340	                        .entity(*level)
+   341	                        .with_child(sound_effect(level_assets.whoosh1.clone(), ()));
+   342	                }
+   343	                MovementAction::Look(direction) => {
+   344	                    let (mut yaw, _, _) = transform.rotation.to_euler(EulerRot::YXZ);
+   345	                    let mut pitch = camera_rotation.0;
+   346	                    let window_scale = window.height().max(window.width());
+   347	
+   348	                    pitch -= (1.2 * direction.y * window_scale / 10_000.0).to_radians();
+   349	                    yaw -= (1.2 * direction.x * window_scale / 10_000.0).to_radians();
+   350	
+   351	                    camera_rotation.0 = pitch.clamp(-1.54, 1.54);
+   352	                    transform.rotation = Quat::from_rotation_y(yaw);
+   353	                }
+   354	                MovementAction::Jump => {
+   355	                    if is_grounded {
+   356	                        linear_velocity.y = jump_impulse.0;
+   357	                    }
+   358	                }
+   359	            }
+   360	        }
+   361	    }
+   362	    player.dash_cooldown -= time.delta_secs();
+   363	    *sound_cooldown -= time.delta_secs();
+   364	}
+   365	
+   366	fn update_camera_rotation(
+   367	    camera: Single<
+   368	        (&CameraRotation, &mut Transform),
+   369	        (With<Camera3d>, Without<CharacterController>),
+   370	    >,
+   371	    time: Res<Time>,
+   372	) {
+   373	    let (camera_rotation, mut camera_transform) = camera.into_inner();
+   374	
+   375	    camera_transform.rotation = Quat::from_rotation_x(camera_rotation.0);
+   376	    camera_transform.rotate_local_z(time.elapsed_secs().sin() / 30.0);
+   377	}
+   378	
+   379	fn attack(
+   380	    mut attack_reader: MessageReader<AttackAction>,
+   381	    mut commands: Commands,
+   382	    player_transform: Single<&Transform, With<Player>>,
+   383	    mut punchables: Query<
+   384	        (&GlobalTransform, Forces),
+   385	        (With<Collider>, Without<Player>, Without<Enemy>),
+   386	    >,
+   387	    mut enemies: Query<(Entity, &GlobalTransform, &mut Enemy)>,
+   388	    level_assets: Res<LevelAssets>,
+   389	    level: Single<Entity, With<Level>>,
+   390	) {
+   391	    fn punch_impulse(
+   392	        target_transform: &GlobalTransform,
+   393	        player_transform: &Transform,
+   394	        punch_forward: &Dir3,
+   395	    ) -> Option<Vec3> {
+   396	        const PUNCH_RANGE: f32 = 2.5;
+   397	        const PUNCH_FORCE: f32 = 7.0;
+   398	        // Right now we only care it's in player forward direction
+   399	        // Consider other ways(maybe ray-cast?) to check if `Punchable` is there
+   400	        const MIN_DOT_PRODUCT: f32 = 0.75;
+   401	
+   402	        let target_pos = target_transform.translation();
+   403	
+   404	        let to_object_from_player = target_pos - player_transform.translation;
+   405	        let distance = to_object_from_player.length();
+   406	
+   407	        if distance > PUNCH_RANGE {
+   408	            debug!("too far ({distance})");
+   409	            return None;
+   410	        }
+   411	
+   412	        let push_direction = (to_object_from_player.normalize() + 0.17 * Vec3::Y).normalize();
+   413	        let dot_product = punch_forward.dot(push_direction);
+   414	        debug!("dot: {dot_product}");
+   415	        if dot_product > MIN_DOT_PRODUCT {
+   416	            Some(push_direction * PUNCH_FORCE)
+   417	        } else {
+   418	            None
+   419	        }
+   420	    }
+   421	
+   422	    for event in attack_reader.read() {
+   423	        match event {
+   424	            AttackAction::Punch(punch_forward) => {
+   425	                for (transform, mut forces) in punchables.iter_mut() {
+   426	                    if let Some(impulse) =
+   427	                        punch_impulse(transform, *player_transform, punch_forward)
+   428	                    {
+   429	                        forces.apply_linear_impulse(impulse);
+   430	                    }
+   431	                }
+   432	
+   433	                for (entity, transform, mut enemy) in enemies.iter_mut() {
+   434	                    if let Some(impulse) =
+   435	                        punch_impulse(transform, *player_transform, punch_forward)
+   436	                    {
+   437	                        enemy.health -= 0.25; // quarter of the health, maybe change this
+   438	                        if enemy.health > 0.0 {
+   439	                            commands.entity(entity).insert(Knockback {
+   440	                                velocity: impulse,
+   441	                                remaining_time: 0.3,
+   442	                            });
+   443	                        } else {
+   444	                            commands.entity(entity).despawn();
+   445	                        }
+   446	                    }
+   447	                }
+   448	
+   449	                // TODO: punch sound effect
+   450	                commands
+   451	                    .entity(*level)
+   452	                    .with_child(sound_effect(level_assets.whoosh1.clone(), ()));
+   453	            }
+   454	        }
+   455	    }
+   456	}
+   457	
+   458	fn spawn_something_punchable(
+   459	    mut commands: Commands,
+   460	    mut meshes: ResMut<Assets<Mesh>>,
+   461	    mut materials: ResMut<Assets<StandardMaterial>>,
+   462	    level: Single<Entity, With<Level>>,
+   463	) {
+   464	    let cube = commands
+   465	        .spawn((
+   466	            Name::new("PunchableCube"),
+   467	            Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+   468	            MeshMaterial3d(materials.add(Color::srgb(0.8, 0.7, 0.6))),
+   469	            Transform::from_xyz(2.0, 1.5, -3.0),
+   470	            RigidBody::Dynamic,
+   471	            Collider::cuboid(1.0, 1.0, 1.0),
+   472	            Mass(5.0),
+   473	        ))
+   474	        .id();
+   475	
+   476	    commands.entity(*level).add_child(cube);
+   477	}
+   478	
+   479	#[allow(unused)]
+   480	fn ray_cast(
+   481	    mut commands: Commands,
+   482	    mut materials: ResMut<Assets<StandardMaterial>>,
+   483	    children: Query<(Entity, &ChildOf)>, // child because material is a child of the object in blender or smth
+   484	    player: Single<(Entity, &Transform), With<Player>>,
+   485	    camera: Single<&GlobalTransform, With<Camera3d>>,
+   486	    query: SpatialQuery,
+   487	    time: Res<Time>,
+   488	    mut last_time: Local<Option<f32>>,
+   489	) {
+   490	    let last_time = last_time.get_or_insert(time.elapsed_secs() - 0.5);
+   491	    let camera = camera.into_inner();
+   492	    let (player, transform) = player.into_inner();
+   493	    if let Some(hit) = query.cast_ray(
+   494	        camera.translation() + transform.forward() * 0.4,
+   495	        camera.forward(),
+   496	        5.0,
+   497	        true,
+   498	        &SpatialQueryFilter::from_excluded_entities([player]),
+   499	    ) {
+   500	        if time.elapsed_secs() - *last_time >= 0.5
+   501	            && let Some((entity, _)) = children.iter().find(|(_, c)| c.0 == hit.entity)
+   502	        {
+   503	            commands
+   504	                .entity(entity)
+   505	                .insert(MeshMaterial3d(materials.add(Color::srgb(
+   506	                    rand::random(),
+   507	                    rand::random(),
+   508	                    rand::random(),
+   509	                ))));
+   510	            *last_time = time.elapsed_secs();
+   511	        }
+   512	        // info!(
+   513	        //     "Hit entity {:?} at distance of {:?} with normal {:?}",
+   514	        //     hit.entity, hit.distance, hit.normal
+   515	        // );
+   516	    } else {
+   517	        *last_time = time.elapsed_secs() - 0.5;
+   518	    }
+   519	}
+   520	
+   521	fn apply_movement_damping(mut query: Query<(&MovementDampingFactor, &mut LinearVelocity)>) {
+   522	    for (damping_factor, mut linear_velocity) in &mut query {
+   523	        linear_velocity.x *= damping_factor.0;
+   524	        linear_velocity.z *= damping_factor.0;
+   525	    }
+   526	}
+
+
+============================================
+FILE: ./src/screens/gameplay/checkpoints.rs
+============================================
+     1	use avian3d::prelude::LinearVelocity;
+     2	use bevy::{camera::visibility::NoFrustumCulling, prelude::*, scene::SceneInstanceReady};
+     3	
+     4	use crate::{menus::Menu, screens::gameplay::Player};
+     5	
+     6	pub struct CheckpointPlugin;
+     7	
+     8	impl Plugin for CheckpointPlugin {
+     9	    fn build(&self, app: &mut App) {
+    10	        app.add_observer(move_player_to_checkpoint);
+    11	        app.add_systems(OnEnter(Menu::None), respawn_at_checkpoint);
+    12	    }
+    13	}
+    14	
+    15	#[derive(Component, Reflect)]
+    16	#[reflect(Component)]
+    17	pub struct Checkpoint;
+    18	
+    19	#[derive(Component, Reflect)]
+    20	#[reflect(Component)]
+    21	pub struct ActiveCheckpoint;
+    22	
+    23	fn respawn_at_checkpoint(
+    24	    player: Single<(&mut Transform, &mut LinearVelocity, &mut Player), Without<ActiveCheckpoint>>,
+    25	    active_checkpoint: Single<&Transform, With<ActiveCheckpoint>>,
+    26	) {
+    27	    let (mut transform, mut linear_velocity, mut player) = player.into_inner();
+    28	
+    29	    if player.is_alive() {
+    30	        return;
+    31	    }
+    32	
+    33	    *player = Default::default();
+    34	    *linear_velocity = Default::default();
+    35	
+    36	    // spawn above the checkpoint so player doesn't fall through the floor
+    37	    transform.translation = active_checkpoint.translation + Vec3::Y;
+    38	}
+    39	
+    40	fn move_player_to_checkpoint(
+    41	    _: On<SceneInstanceReady>,
+    42	    mut commands: Commands,
+    43	    mut player: Single<&mut Transform, With<Player>>,
+    44	    mesh3d: Query<Entity, With<Mesh3d>>,
+    45	    active_checkpoint: Single<&Transform, (With<ActiveCheckpoint>, Without<Player>)>,
+    46	) {
+    47	    for entity in mesh3d.iter() {
+    48	        commands.entity(entity).insert(NoFrustumCulling);
+    49	    }
+    50	    player.translation = active_checkpoint.translation + Vec3::Y;
+    51	}
+
+
+============================================
+FILE: ./src/screens/gameplay/combo_system.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	pub struct ComboSystemPlugin {
+     4	
+     5	}
+     6	
+     7	impl Plugin for ComboSystemPlugin {
+     8	
+     9	}
+    10	
+    11	fn streak_tracking() {
+    12	
+    13	}
+    14	
+    15	fn slow_motion_trigger() {
+    16	
+    17	}
+
+
+============================================
+FILE: ./src/screens/gameplay/enemy.rs
+============================================
+     1	//Crear un id para cada enemigo que haga spawn para no colapsar la funcion EnemySpawnCmd
+     2	// Que la capsula del enemigo tenga una etiqueta mostrando un arreglo de iconos de corazones para visualizar la vida del enemigo
+     3	use std::time::Duration;
+     4	
+     5	use avian3d::{math::*, prelude::*};
+     6	use bevy::prelude::*;
+     7	use bevy::time::common_conditions::on_timer;
+     8	use bevy_landmass::{PointSampleDistance3d, prelude::*};
+     9	
+    10	use crate::screens::Screen;
+    11	use crate::screens::gameplay::LevelAssets;
+    12	
+    13	pub struct EnemyPlugin;
+    14	
+    15	const ENEMY_GRAVITY: Vec3 = Vec3::new(0.0, -9.81, 0.0);
+    16	const MAX_SLOPE_ANGLE: f32 = 0.1;
+    17	
+    18	impl Plugin for EnemyPlugin {
+    19	    fn build(&self, app: &mut App) {
+    20	        app.add_systems(
+    21	            Update,
+    22	            (
+    23	                enemy_track_nearby_player,
+    24	                enemy_move_toward_target,
+    25	                apply_knockback,
+    26	                update_grounded,
+    27	                apply_gravity,
+    28	                print_desired_velocity.run_if(on_timer(Duration::from_millis(300))),
+    29	            )
+    30	                .chain()
+    31	                .run_if(in_state(Screen::Gameplay)),
+    32	        );
+    33	
+    34	        // Run collision handling after collision detection
+    35	        app.add_systems(
+    36	            PhysicsSchedule,
+    37	            enemy_collision.in_set(NarrowPhaseSystems::Last),
+    38	        );
+    39	
+    40	        // #[cfg(feature = "dev")]
+    41	        // {
+    42	        //     app.add_systems(
+    43	        //         Update,
+    44	        //         print_desired_velocity.run_if(bevy::input::common_conditions::input_toggle_active(
+    45	        //             false,
+    46	        //             crate::dev_tools::TOGGLE_KEY,
+    47	        //         )),
+    48	        //     );
+    49	        // }
+    50	    }
+    51	}
+    52	
+    53	#[derive(Component)]
+    54	pub struct Enemy {
+    55	    pub health: f32, // 0.0..1.0
+    56	}
+    57	
+    58	#[derive(Component)]
+    59	pub struct Knockback {
+    60	    pub velocity: Vec3,
+    61	    pub remaining_time: f32,
+    62	}
+    63	
+    64	#[derive(Component)]
+    65	#[component(storage = "SparseSet")]
+    66	pub struct Grounded;
+    67	
+    68	pub struct EnemySpawnCmd {
+    69	    pub transform: Transform,
+    70	    pub parent: Option<Entity>,
+    71	}
+    72	
+    73	impl Command for EnemySpawnCmd {
+    74	    fn apply(self, world: &mut World) {
+    75	        world.run_system_cached_with(spawn_enemy, self).unwrap();
+    76	    }
+    77	}
+    78	
+    79	pub fn spawn_enemy(
+    80	    In(args): In<EnemySpawnCmd>,
+    81	    mut c: Commands,
+    82	    level_assets: Res<LevelAssets>,
+    83	    navmesh_ref: Res<super::NavmeshArchipelagoHolder>,
+    84	) {
+    85	    let enemy_collider = Collider::capsule(0.45, 1.3);
+    86	    let mut caster_shape = enemy_collider.clone();
+    87	    caster_shape.set_scale(Vec3::ONE * 0.99, 10);
+    88	
+    89	    let mut enemy = c.spawn((
+    90	        Name::new("Enemy"),
+    91	        Enemy { health: 1.0 },
+    92	        SceneRoot(level_assets.hammerhead.scene.clone()),
+    93	        args.transform,
+    94	        Visibility::Inherited,
+    95	        RigidBody::Kinematic,
+    96	        Agent3dBundle {
+    97	            agent: default(),
+    98	            archipelago_ref: ArchipelagoRef3d::new(navmesh_ref.0),
+    99	            settings: AgentSettings {
+   100	                radius: 1.0,
+   101	                desired_speed: 3.0,
+   102	                max_speed: 4.0,
+   103	            },
+   104	        },
+   105	        AgentTarget3d::None,
+   106	        ShapeCaster::new(
+   107	            caster_shape,
+   108	            Vec3::new(0.0, 1.17, 0.0),
+   109	            Quaternion::default(),
+   110	            Dir3::NEG_Y,
+   111	        )
+   112	        .with_max_distance(0.5),
+   113	        Children::spawn_one((enemy_collider, Transform::from_xyz(0.0, 1.17, 0.0))),
+   114	    ));
+   115	
+   116	    if let Some(parent) = args.parent {
+   117	        enemy.insert(ChildOf(parent));
+   118	    }
+   119	}
+   120	
+   121	fn print_desired_velocity(query: Query<(Entity, &AgentDesiredVelocity3d, &AgentState)>) {
+   122	    for (entity, desired_velocity, state) in query.iter() {
+   123	        debug!(
+   124	            "entity={:?}, desired_velocity={} {state:?}",
+   125	            entity,
+   126	            desired_velocity.velocity()
+   127	        );
+   128	    }
+   129	}
+   130	
+   131	fn enemy_track_nearby_player(
+   132	    mut enemies: Query<(&Transform, &mut AgentTarget3d), With<Enemy>>,
+   133	    players: Query<(Entity, &Transform), With<super::Player>>,
+   134	    archipelago: Query<&Archipelago3d>,
+   135	) {
+   136	    const DETECTION_RANGE: f32 = 15.0;
+   137	
+   138	    const POINT_SAMPLE_CONFIG: PointSampleDistance3d = PointSampleDistance3d {
+   139	        animation_link_max_vertical_distance: 50.,
+   140	        distance_above: 50.,
+   141	        distance_below: 50.,
+   142	        horizontal_distance: 50.,
+   143	        vertical_preference_ratio: 1.0,
+   144	    };
+   145	
+   146	    let Some(archipelago) = archipelago.iter().next() else {
+   147	        return;
+   148	    };
+   149	
+   150	    let Some((player_entity, player_transform)) = players.iter().next() else {
+   151	        return;
+   152	    };
+   153	
+   154	    for (enemy_transform, mut target) in enemies.iter_mut() {
+   155	        let distance = enemy_transform
+   156	            .translation
+   157	            .distance(player_transform.translation);
+   158	
+   159	        if distance <= DETECTION_RANGE {
+   160	            if let Ok(point) =
+   161	                archipelago.sample_point(player_transform.translation, &POINT_SAMPLE_CONFIG)
+   162	            {
+   163	                *target = AgentTarget3d::Point(point.point());
+   164	            } else {
+   165	                *target = AgentTarget3d::Entity(player_entity);
+   166	            }
+   167	        } else {
+   168	            *target = AgentTarget3d::None;
+   169	        }
+   170	    }
+   171	}
+   172	
+   173	fn enemy_move_toward_target(
+   174	    mut enemies: Query<
+   175	        (
+   176	            &AgentState,
+   177	            &AgentTarget3d,
+   178	            &AgentDesiredVelocity3d,
+   179	            &mut LinearVelocity,
+   180	            &mut Rotation,
+   181	        ),
+   182	        (With<Enemy>, Without<Knockback>),
+   183	    >,
+   184	) {
+   185	    for (state, target, desired_velocity, mut linear_velocity, mut rotation) in enemies.iter_mut() {
+   186	        if *state != AgentState::Moving {
+   187	            linear_velocity.x = 0.0;
+   188	            linear_velocity.z = 0.0;
+   189	            return;
+   190	        }
+   191	        if !matches!(target, AgentTarget3d::None) {
+   192	            linear_velocity.0 = desired_velocity.velocity();
+   193	
+   194	            // jumpy
+   195	            *rotation =
+   196	                Quat::from_rotation_y(PI / 2.0 - desired_velocity.velocity().xz().to_angle())
+   197	                    .into();
+   198	        }
+   199	    }
+   200	}
+   201	
+   202	fn apply_knockback(
+   203	    mut commands: Commands,
+   204	    mut enemies: Query<(Entity, &mut LinearVelocity, &mut Knockback)>,
+   205	    time: Res<Time>,
+   206	) {
+   207	    for (entity, mut linear_velocity, mut knockback) in enemies.iter_mut() {
+   208	        knockback.velocity += ENEMY_GRAVITY * time.delta_secs();
+   209	        linear_velocity.0 = knockback.velocity;
+   210	        knockback.remaining_time -= time.delta_secs();
+   211	
+   212	        if knockback.remaining_time <= 0.0 {
+   213	            commands.entity(entity).remove::<Knockback>();
+   214	        }
+   215	    }
+   216	}
+   217	
+   218	/// Updates the [`Grounded`] status for character controllers.
+   219	fn update_grounded(
+   220	    mut commands: Commands,
+   221	    mut query: Query<(Entity, &ShapeHits, &Rotation), (With<Enemy>, Without<Knockback>)>,
+   222	) {
+   223	    for (entity, hits, rotation) in &mut query {
+   224	        // The character is grounded if the shape caster has a hit with a normal
+   225	        // that isn't too steep.
+   226	        let is_grounded = hits.iter().any(|hit| {
+   227	            (rotation * -hit.normal2).angle_between(Vector::Y).abs() <= 35f32.to_radians()
+   228	        });
+   229	        if is_grounded {
+   230	            commands.entity(entity).insert(Grounded);
+   231	        } else {
+   232	            commands.entity(entity).remove::<Grounded>();
+   233	        }
+   234	    }
+   235	}
+   236	
+   237	fn apply_gravity(
+   238	    time: Res<Time>,
+   239	    mut enemies: Query<&mut LinearVelocity, (With<Enemy>, Without<Knockback>, Without<Grounded>)>,
+   240	) {
+   241	    for mut linear_velocity in enemies.iter_mut() {
+   242	        linear_velocity.0 += ENEMY_GRAVITY * time.delta_secs();
+   243	    }
+   244	}
+   245	
+   246	/// Kinematic bodies do not get pushed by collisions by default,
+   247	/// so it needs to be done manually.
+   248	///
+   249	/// This system handles collision response for kinematic character controllers
+   250	/// by pushing them along their contact normals by the current penetration depth,
+   251	/// and applying velocity corrections in order to snap to slopes, slide along walls,
+   252	/// and predict collisions using speculative contacts.
+   253	#[allow(clippy::type_complexity)]
+   254	fn enemy_collision(
+   255	    collisions: Collisions,
+   256	    bodies: Query<&RigidBody>,
+   257	    collider_rbs: Query<&ColliderOf, Without<Sensor>>,
+   258	    mut enemies: Query<(&mut Position, &mut LinearVelocity), With<Enemy>>,
+   259	    time: Res<Time>,
+   260	) {
+   261	    let max_slope_angle = Some(MAX_SLOPE_ANGLE);
+   262	    // Iterate through collisions and move the kinematic body to resolve penetration
+   263	    for contacts in collisions.iter() {
+   264	        // Get the rigid body entities of the colliders (colliders could be children)
+   265	        let Ok([&ColliderOf { body: rb1 }, &ColliderOf { body: rb2 }]) =
+   266	            collider_rbs.get_many([contacts.collider1, contacts.collider2])
+   267	        else {
+   268	            continue;
+   269	        };
+   270	
+   271	        // Get the body of the character controller and whether it is the first
+   272	        // or second entity in the collision.
+   273	        let is_first: bool;
+   274	
+   275	        let character_rb: RigidBody;
+   276	        let is_other_dynamic: bool;
+   277	
+   278	        let (mut position, mut linear_velocity) = if let Ok(enemy) = enemies.get_mut(rb1) {
+   279	            is_first = true;
+   280	            character_rb = *bodies.get(rb1).unwrap();
+   281	            is_other_dynamic = bodies.get(rb2).is_ok_and(|rb| rb.is_dynamic());
+   282	            enemy
+   283	        } else if let Ok(character) = enemies.get_mut(rb2) {
+   284	            is_first = false;
+   285	            character_rb = *bodies.get(rb2).unwrap();
+   286	            is_other_dynamic = bodies.get(rb1).is_ok_and(|rb| rb.is_dynamic());
+   287	            character
+   288	        } else {
+   289	            continue;
+   290	        };
+   291	
+   292	        // This system only handles collision response for kinematic character controllers.
+   293	        if !character_rb.is_kinematic() {
+   294	            continue;
+   295	        }
+   296	
+   297	        // Iterate through contact manifolds and their contacts.
+   298	        // Each contact in a single manifold shares the same contact normal.
+   299	        for manifold in contacts.manifolds.iter() {
+   300	            let normal = if is_first {
+   301	                -manifold.normal
+   302	            } else {
+   303	                manifold.normal
+   304	            };
+   305	
+   306	            let mut deepest_penetration: Scalar = Scalar::MIN;
+   307	
+   308	            // Solve each penetrating contact in the manifold.
+   309	            for contact in manifold.points.iter() {
+   310	                if contact.penetration > 0.0 {
+   311	                    position.0 += normal * contact.penetration;
+   312	                }
+   313	                deepest_penetration = deepest_penetration.max(contact.penetration);
+   314	            }
+   315	
+   316	            // For now, this system only handles velocity corrections for collisions against static geometry.
+   317	            if is_other_dynamic {
+   318	                continue;
+   319	            }
+   320	
+   321	            // Determine if the slope is climbable or if it's too steep to walk on.
+   322	            let slope_angle = normal.angle_between(Vector::Y);
+   323	            let climbable = max_slope_angle.is_some_and(|angle| slope_angle.abs() <= angle);
+   324	
+   325	            if deepest_penetration > 0.0 {
+   326	                // If the slope is climbable, snap the velocity so that the character
+   327	                // up and down the surface smoothly.
+   328	                if climbable {
+   329	                    // Points in the normal's direction in the XZ plane.
+   330	                    let normal_direction_xz =
+   331	                        normal.reject_from_normalized(Vector::Y).normalize_or_zero();
+   332	
+   333	                    // The movement speed along the direction above.
+   334	                    let linear_velocity_xz = linear_velocity.dot(normal_direction_xz);
+   335	
+   336	                    // Snap the Y speed based on the speed at which the character is moving
+   337	                    // up or down the slope, and how steep the slope is.
+   338	                    //
+   339	                    // A 2D visualization of the slope, the contact normal, and the velocity components:
+   340	                    //
+   341	                    //             ╱
+   342	                    //     normal ╱
+   343	                    // *         ╱
+   344	                    // │   *    ╱   velocity_x
+   345	                    // │       * - - - - - -
+   346	                    // │           *       | velocity_y
+   347	                    // │               *   |
+   348	                    // *───────────────────*
+   349	
+   350	                    let max_y_speed = -linear_velocity_xz * slope_angle.tan();
+   351	                    linear_velocity.y = linear_velocity.y.max(max_y_speed);
+   352	                } else {
+   353	                    // The character is intersecting an unclimbable object, like a wall.
+   354	                    // We want the character to slide along the surface, similarly to
+   355	                    // a collide-and-slide algorithm.
+   356	
+   357	                    // Don't apply an impulse if the character is moving away from the surface.
+   358	                    if linear_velocity.dot(normal) > 0.0 {
+   359	                        continue;
+   360	                    }
+   361	
+   362	                    // Slide along the surface, rejecting the velocity along the contact normal.
+   363	                    let impulse = linear_velocity.reject_from_normalized(normal);
+   364	                    linear_velocity.0 = impulse;
+   365	                }
+   366	            } else {
+   367	                // The character is not yet intersecting the other object,
+   368	                // but the narrow phase detected a speculative collision.
+   369	                //
+   370	                // We need to push back the part of the velocity
+   371	                // that would cause penetration within the next frame.
+   372	
+   373	                let normal_speed = linear_velocity.dot(normal);
+   374	
+   375	                // Don't apply an impulse if the character is moving away from the surface.
+   376	                if normal_speed > 0.0 {
+   377	                    continue;
+   378	                }
+   379	
+   380	                // Compute the impulse to apply.
+   381	                let impulse_magnitude =
+   382	                    normal_speed - (deepest_penetration / time.delta_secs_f64().adjust_precision());
+   383	                let mut impulse = impulse_magnitude * normal;
+   384	
+   385	                // Apply the impulse differently depending on the slope angle.
+   386	                if climbable {
+   387	                    // Avoid sliding down slopes.
+   388	                    linear_velocity.y -= impulse.y.min(0.0);
+   389	                } else {
+   390	                    // Avoid climbing up walls.
+   391	                    impulse.y = impulse.y.max(0.0);
+   392	                    linear_velocity.0 -= impulse;
+   393	                }
+   394	            }
+   395	        }
+   396	    }
+   397	}
+
+
+============================================
+FILE: ./src/screens/gameplay/enemy_spawn.rs
+============================================
+     1	use bevy::prelude::*;
+     2	use avian3d::prelude::*;
+     3	use crate::screens::gameplay::enemy::EnemySpawnCmd;
+     4	
+     5	#[derive(Component)]
+     6	pub struct SpawnConsumed;
+     7	
+     8	pub struct EnemySpawnPlugin;
+     9	
+    10	impl Plugin for EnemySpawnPlugin {
+    11	    fn build(&self, app: &mut App) {
+    12	        app.register_type::<EnemySpawn>();
+    13	        // app.add_systems(Update, spawn_enemies_from_scene);
+    14	    }
+    15	}
+    16	
+    17	#[derive(Component, Reflect, Default)]
+    18	#[reflect(Component, Default)]
+    19	pub struct EnemySpawn {
+    20	    pub parent: Option<Entity>,
+    21	
+    22	    // Custom props de Blender
+    23	    pub wave: i32,
+    24	    pub zone: String,
+    25	    pub r#type: String,
+    26	    pub delay: f32,
+    27	}
+    28	
+    29	
+    30	fn spawn_enemies_from_scene(
+    31	    mut commands: Commands,
+    32	    // CAMBIO 1: Usamos ChildOf en lugar de Parent (Bevy 0.15+)
+    33	    // CAMBIO 2: Añadimos filtros para asegurar que GlobalTransform y Name estén listos
+    34	    nodes: Query<(Entity, &GlobalTransform, &Name), (Without<SpawnConsumed>, With<ChildOf>)>,
+    35	) {
+    36	    for (entity, g_transform, name) in &nodes {
+    37	        if name.as_str().contains("EnemySpawn") {
+    38	            // CAMBIO 3: Especificamos el tipo Vec3 para ayudar a la inferencia
+    39	            let spawn_pos: Vec3 = g_transform.translation();
+    40	
+    41	            // Evitamos spawnear si la escena aún no se ha posicionado en el mundo
+    42	            if spawn_pos == Vec3::ZERO {
+    43	                continue;
+    44	            }
+    45	
+    46	            info!("Spawning enemy from node: {} at {}", name, spawn_pos);
+    47	
+    48	            commands.queue(EnemySpawnCmd {
+    49	                transform: Transform::from_translation(spawn_pos),
+    50	                parent: None,
+    51	            });
+    52	
+    53	            // Marcamos para no procesar de nuevo en el siguiente frame
+    54	            commands.entity(entity).insert(SpawnConsumed);
+    55	
+    56	            // Opcional: Si no necesitas el objeto vacío de Blender para nada más,
+    57	            // puedes borrarlo para limpiar la jerarquía:
+    58	            // commands.entity(entity).despawn_recursive();
+    59	        }
+    60	    }
+    61	}
+
+
+============================================
+FILE: ./src/screens/gameplay/events.rs
+============================================
+     1	struct EnemyKilledEvent;
+     2	struct CapsuleDestroyedEvent;
+     3	struct ArenaCollapsedEvent;
+     4	struct ComboTriggeredEvent;
+     5	struct LevelWonEvent;
+     6	struct LevelLostEvent;
+
+
+============================================
+FILE: ./src/screens/gameplay/flower_capsule.rs
+============================================
+
+
+============================================
+FILE: ./src/screens/gameplay/game_states.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	pub struct GameStatePlugin {}
+     4	
+     5	impl Plugin for GameStatePlugin {}
+     6	
+     7	fn win_state() {}
+     8	
+     9	fn lose_state() {
+    10	
+    11	}
+
+
+============================================
+FILE: ./src/screens/gameplay/hammerhead.rs
+============================================
+     1	use std::{f32::consts::PI, time::Duration};
+     2	
+     3	use bevy::{animation::RepeatAnimation, prelude::*};
+     4	
+     5	use crate::screens::{Screen, gameplay::LevelAssets};
+     6	
+     7	const HAMMERHEAD: &str = "models/hammerhead.glb";
+     8	
+     9	pub fn hammerhead(app: &mut App) {
+    10	    app.add_systems(OnEnter(Screen::Gameplay), setup)
+    11	        .add_systems(
+    12	            Update,
+    13	            (setup_scene_once_loaded, keyboard_control).run_if(in_state(Screen::Gameplay)),
+    14	        );
+    15	}
+    16	
+    17	#[derive(Asset, Clone, Reflect)]
+    18	pub struct HammerheadAssets {
+    19	    #[dependency]
+    20	    pub scene: Handle<Scene>,
+    21	
+    22	    #[dependency]
+    23	    pub animations: Vec<Handle<AnimationClip>>,
+    24	}
+    25	
+    26	impl HammerheadAssets {
+    27	    pub fn load(assets: &AssetServer) -> Self {
+    28	        Self {
+    29	            scene: assets.load(GltfAssetLabel::Scene(0).from_asset(HAMMERHEAD)),
+    30	            animations: vec![
+    31	                assets.load(GltfAssetLabel::Animation(0).from_asset(HAMMERHEAD)), // attack
+    32	                assets.load(GltfAssetLabel::Animation(1).from_asset(HAMMERHEAD)), // idle
+    33	                assets.load(GltfAssetLabel::Animation(2).from_asset(HAMMERHEAD)), // run
+    34	                assets.load(GltfAssetLabel::Animation(1).from_asset("models/hammerhead walks.glb")),
+    35	            ],
+    36	        }
+    37	    }
+    38	}
+    39	
+    40	#[derive(Resource)]
+    41	struct HammerheadAnimations {
+    42	    animations: Vec<AnimationNodeIndex>,
+    43	    graph_handle: Handle<AnimationGraph>,
+    44	}
+    45	
+    46	#[derive(Component, Reflect)]
+    47	#[reflect(Component)]
+    48	struct Hammerhead;
+    49	
+    50	fn setup(
+    51	    mut commands: Commands,
+    52	    level_assets: Res<LevelAssets>,
+    53	    mut graphs: ResMut<Assets<AnimationGraph>>,
+    54	) {
+    55	    // Build the animation graph
+    56	    let (graph, node_indices) =
+    57	        AnimationGraph::from_clips(level_assets.hammerhead.animations.clone());
+    58	
+    59	    // Keep our animation graph in a Resource so that it can be inserted onto
+    60	    // the correct entity once the scene actually loads.
+    61	    let graph_handle = graphs.add(graph);
+    62	    commands.insert_resource(HammerheadAnimations {
+    63	        animations: node_indices,
+    64	        graph_handle,
+    65	    });
+    66	
+    67	    // Instructions
+    68	
+    69	    commands.spawn((
+    70	        Text::new(concat!(
+    71	            "space: play / pause\n",
+    72	            "up / down: playback speed\n",
+    73	            "left / right: seek\n",
+    74	            "1-3: play N times\n",
+    75	            "L: loop forever\n",
+    76	            "return: change animation\n",
+    77	        )),
+    78	        Node {
+    79	            position_type: PositionType::Absolute,
+    80	            top: px(12),
+    81	            left: px(12),
+    82	            ..default()
+    83	        },
+    84	    ));
+    85	}
+    86	
+    87	// An `AnimationPlayer` is automatically added to the scene when it's ready.
+    88	// When the player is added, start the animation.
+    89	fn setup_scene_once_loaded(
+    90	    mut commands: Commands,
+    91	    animations: Res<HammerheadAnimations>,
+    92	    mut players: Query<(Entity, &mut AnimationPlayer), (Added<AnimationPlayer>, With<Hammerhead>)>,
+    93	) {
+    94	    for (entity, mut player) in &mut players {
+    95	        info!("setting up scene once loaded...");
+    96	
+    97	        let mut transitions = AnimationTransitions::new();
+    98	
+    99	        // Make sure to start the animation via the `AnimationTransitions`
+   100	        // component. The `AnimationTransitions` component wants to manage all
+   101	        // the animations and will get confused if the animations are started
+   102	        // directly via the `AnimationPlayer`.
+   103	        transitions
+   104	            .play(&mut player, animations.animations[0], Duration::ZERO)
+   105	            .repeat();
+   106	
+   107	        commands
+   108	            .entity(entity)
+   109	            .insert(AnimationGraphHandle(animations.graph_handle.clone()))
+   110	            .insert(transitions);
+   111	    }
+   112	}
+   113	
+   114	fn keyboard_control(
+   115	    keyboard_input: Res<ButtonInput<KeyCode>>,
+   116	    mut animation_players: Query<
+   117	        (&mut AnimationPlayer, &mut AnimationTransitions),
+   118	        With<Hammerhead>,
+   119	    >,
+   120	    animations: Res<HammerheadAnimations>,
+   121	    mut current_animation: Local<usize>,
+   122	) {
+   123	    for (mut player, mut transitions) in &mut animation_players {
+   124	        let Some((&playing_animation_index, _)) = player.playing_animations().next() else {
+   125	            continue;
+   126	        };
+   127	
+   128	        if keyboard_input.just_pressed(KeyCode::Space) {
+   129	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   130	            if playing_animation.is_paused() {
+   131	                playing_animation.resume();
+   132	            } else {
+   133	                playing_animation.pause();
+   134	            }
+   135	        }
+   136	
+   137	        if keyboard_input.just_pressed(KeyCode::ArrowUp) {
+   138	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   139	            let speed = playing_animation.speed();
+   140	            playing_animation.set_speed(speed * 1.2);
+   141	        }
+   142	
+   143	        if keyboard_input.just_pressed(KeyCode::ArrowDown) {
+   144	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   145	            let speed = playing_animation.speed();
+   146	            playing_animation.set_speed(speed * 0.8);
+   147	        }
+   148	
+   149	        if keyboard_input.just_pressed(KeyCode::ArrowLeft) {
+   150	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   151	            let elapsed = playing_animation.seek_time();
+   152	            playing_animation.seek_to(elapsed - 0.1);
+   153	        }
+   154	
+   155	        if keyboard_input.just_pressed(KeyCode::ArrowRight) {
+   156	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   157	            let elapsed = playing_animation.seek_time();
+   158	            playing_animation.seek_to(elapsed + 0.1);
+   159	        }
+   160	
+   161	        if keyboard_input.just_pressed(KeyCode::Enter) {
+   162	            *current_animation = (*current_animation + 1) % animations.animations.len();
+   163	
+   164	            transitions
+   165	                .play(
+   166	                    &mut player,
+   167	                    animations.animations[*current_animation],
+   168	                    Duration::from_millis(250),
+   169	                )
+   170	                .repeat();
+   171	        }
+   172	
+   173	        if keyboard_input.just_pressed(KeyCode::Digit1) {
+   174	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   175	            playing_animation
+   176	                .set_repeat(RepeatAnimation::Count(1))
+   177	                .replay();
+   178	        }
+   179	
+   180	        if keyboard_input.just_pressed(KeyCode::Digit2) {
+   181	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   182	            playing_animation
+   183	                .set_repeat(RepeatAnimation::Count(2))
+   184	                .replay();
+   185	        }
+   186	
+   187	        if keyboard_input.just_pressed(KeyCode::Digit3) {
+   188	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   189	            playing_animation
+   190	                .set_repeat(RepeatAnimation::Count(3))
+   191	                .replay();
+   192	        }
+   193	
+   194	        if keyboard_input.just_pressed(KeyCode::KeyL) {
+   195	            let playing_animation = player.animation_mut(playing_animation_index).unwrap();
+   196	            playing_animation.set_repeat(RepeatAnimation::Forever);
+   197	        }
+   198	    }
+   199	}
+
+
+============================================
+FILE: ./src/screens/gameplay/hide_colliders.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	pub struct HideCollidersPlugin;
+     4	
+     5	impl Plugin for HideCollidersPlugin {
+     6	    fn build(&self, app: &mut App) {
+     7	        app.add_systems(Update, hide_collision_geometry);
+     8	    }
+     9	}
+    10	
+    11	fn hide_collision_geometry(
+    12	    mut commands: Commands,
+    13	    // Buscamos entidades que tengan nombre y visibilidad, y que no hayamos procesado antes
+    14	    query: Query<(Entity, &Name, &Visibility), (Added<Name>, Without<Node>)>,
+    15	) {
+    16	    for (entity, name, visibility) in query.iter() {
+    17	        let name_str = name.as_str();
+    18	
+    19	        // Comprobamos si el nombre empieza por los prefijos que definiste
+    20	        if name_str.starts_with("Collider") || name_str.starts_with("Collision") {
+    21	
+    22	            // Opción 1: Simplemente ocultarlo (sigue existiendo para la física/navmesh)
+    23	            commands.entity(entity).insert(Visibility::Hidden);
+    24	
+    25	            // Opción 2 (Opcional): Si quieres estar 100% seguro de que no consume recursos de GPU,
+    26	            // puedes quitarle el componente de malla, pero manteniendo la entidad para Avian:
+    27	            // commands.entity(entity).remove::<Mesh3d>();
+    28	
+    29	            info!("Ocultando objeto de colisión: {}", name_str);
+    30	        }
+    31	    }
+    32	}
+
+
+============================================
+FILE: ./src/screens/gameplay/katana.rs
+============================================
+     1	//! Plays animations from a skinned glTF.
+     2	
+     3	use std::{f32::consts::PI, time::Duration};
+     4	
+     5	use bevy::{animation::RepeatAnimation, light::CascadeShadowConfigBuilder, prelude::*};
+     6	
+     7	use crate::screens::{
+     8	    Screen,
+     9	    gameplay::{LevelAssets, character_controller::AttackAction, player::Player},
+    10	};
+    11	
+    12	#[derive(Resource)]
+    13	pub struct Animations {
+    14	    animations: Vec<AnimationNodeIndex>,
+    15	    graph_handle: Handle<AnimationGraph>,
+    16	}
+    17	
+    18	#[derive(Component, Reflect)]
+    19	#[reflect(Component)]
+    20	pub struct Katana;
+    21	
+    22	pub fn katana_setup(
+    23	    mut commands: Commands,
+    24	    mut graphs: ResMut<Assets<AnimationGraph>>,
+    25	    level_assets: Res<LevelAssets>,
+    26	    camera: Single<Entity, With<Camera3d>>,
+    27	) {
+    28	    // Build the animation graph
+    29	    let (graph, node_indices) = AnimationGraph::from_clips([
+    30	        level_assets.katana_idle.clone(),
+    31	        level_assets.katana_swing.clone(),
+    32	    ]);
+    33	
+    34	    // Keep our animation graph in a Resource so that it can be inserted onto
+    35	    // the correct entity once the scene actually loads.
+    36	    let graph_handle = graphs.add(graph);
+    37	    commands.insert_resource(Animations {
+    38	        animations: node_indices,
+    39	        graph_handle,
+    40	    });
+    41	
+    42	    commands.spawn((
+    43	        Name::new("Katana"),
+    44	        SceneRoot(level_assets.katana_scene.clone()),
+    45	        Transform::from_translation(Vec3::new(-0.1, -0.8, -1.4))
+    46	            .with_rotation(Quat::from_rotation_y(0.05))
+    47	            .with_scale(Vec3::splat(0.8)),
+    48	        ChildOf(*camera),
+    49	    ));
+    50	}
+    51	
+    52	// An `AnimationPlayer` is automatically added to the scene when it's ready.
+    53	// When the player is added, start the animation.
+    54	pub fn poor_setup_for_katana_animations(
+    55	    // TODO: system from bevy example, idk how to make it non update
+    56	    mut commands: Commands,
+    57	    animations: Option<Res<Animations>>,
+    58	    screen_state: Res<State<Screen>>,
+    59	    mut players: Query<(Entity, &mut AnimationPlayer), (Added<AnimationPlayer>, With<Katana>)>,
+    60	    mut done: Local<bool>,
+    61	) {
+    62	    if screen_state.is_changed() && matches!(screen_state.get(), Screen::Gameplay) {
+    63	        *done = false;
+    64	    }
+    65	    if *done {
+    66	        return;
+    67	    }
+    68	
+    69	    let Some(animations) = animations else {
+    70	        return;
+    71	    };
+    72	
+    73	    for (entity, mut player) in &mut players {
+    74	        let mut transitions = AnimationTransitions::new();
+    75	
+    76	        // Make sure to start the animation via the `AnimationTransitions`
+    77	        // component. The `AnimationTransitions` component wants to manage all
+    78	        // the animations and will get confused if the animations are started
+    79	        // directly via the `AnimationPlayer`.
+    80	        transitions
+    81	            .play(&mut player, animations.animations[0], Duration::ZERO)
+    82	            .repeat();
+    83	
+    84	        commands
+    85	            .entity(entity)
+    86	            .insert(AnimationGraphHandle(animations.graph_handle.clone()))
+    87	            .insert(transitions);
+    88	        *done = true;
+    89	    }
+    90	}
+    91	
+    92	pub fn katana_animation(
+    93	    mouse_input: Res<ButtonInput<MouseButton>>,
+    94	    mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions), With<Katana>>,
+    95	    mut attack_writer: MessageWriter<AttackAction>,
+    96	    player_transform: Single<&Transform, With<Player>>,
+    97	    animations: Res<Animations>,
+    98	    mut non_idle: Local<bool>,
+    99	) {
+   100	    for (mut player, mut transitions) in &mut animation_players {
+   101	        if mouse_input.just_pressed(MouseButton::Left) {
+   102	            attack_writer.write(AttackAction::Punch(player_transform.forward()));
+   103	            transitions
+   104	                .play(
+   105	                    &mut player,
+   106	                    animations.animations[1],
+   107	                    Duration::from_millis(60),
+   108	                )
+   109	                .set_speed(1.3);
+   110	            *non_idle = true;
+   111	        }
+   112	
+   113	        if player.all_finished() {
+   114	            *non_idle = false;
+   115	            transitions
+   116	                .play(
+   117	                    &mut player,
+   118	                    animations.animations[0],
+   119	                    Duration::from_millis(250),
+   120	                )
+   121	                .repeat();
+   122	        }
+   123	    }
+   124	}
+
+
+============================================
+FILE: ./src/screens/gameplay/mod.rs
+============================================
+     1	//! The screen state for the main gameplay.
+     2	
+     3	use avian3d::prelude::*;
+     4	use bevy::{
+     5	    anti_alias::fxaa::Fxaa,
+     6	    camera::Exposure,
+     7	    core_pipeline::{Skybox, tonemapping::Tonemapping},
+     8	    input::common_conditions::input_just_pressed,
+     9	    post_process::bloom::Bloom,
+    10	    prelude::*,
+    11	    window::CursorOptions,
+    12	};
+    13	use bevy_landmass::prelude::*;
+    14	use bevy_rerecast::prelude::*;
+    15	use bevy_seedling::sample::AudioSample;
+    16	use landmass_rerecast::{Island3dBundle, LandmassRerecastPlugin, NavMeshHandle3d};
+    17	use std::f32::consts::PI;
+    18	
+    19	use crate::{
+    20	    PausableSystems, Pause,
+    21	    asset_tracking::LoadResource,
+    22	    menus::Menu,
+    23	    screens::{
+    24	        Screen,
+    25	        gameplay::{
+    26	            character_controller::CameraRotation,
+    27	            hammerhead::HammerheadAssets,
+    28	            katana::{katana_animation, katana_setup, poor_setup_for_katana_animations},
+    29	            player::Player,
+    30	        },
+    31	        set_cursor_grab,
+    32	    },
+    33	};
+    34	
+    35	mod character_controller;
+    36	mod checkpoints;
+    37	mod enemy;
+    38	mod hammerhead;
+    39	mod katana;
+    40	mod player;
+    41	mod enemy_spawn;
+    42	 // mod spawn_zones;
+    43	mod world_butterflies;
+    44	mod spawn_enemy_waves;
+    45	mod hide_colliders;
+    46	
+    47	
+    48	#[derive(Component)]
+    49	struct Level;
+    50	
+    51	pub(super) fn plugin(app: &mut App) {
+    52	    app.add_plugins((
+    53	        PhysicsPlugins::default(),
+    54	        bevy_landmass::Landmass3dPlugin::default(),
+    55	        bevy_landmass::debug::Landmass3dDebugPlugin::default(),
+    56	        bevy_rerecast::NavmeshPlugins::default(),
+    57	        avian_rerecast::AvianBackendPlugin::default(),
+    58	        LandmassRerecastPlugin::default(),
+    59	        character_controller::CharacterControllerPlugin,
+    60	        enemy::EnemyPlugin,
+    61	        enemy_spawn::EnemySpawnPlugin,
+    62	         // spawn_zones::SpawnPlugin,
+    63	        world_butterflies::WorldButterfliesPlugin,
+    64	        checkpoints::CheckpointPlugin,
+    65	        spawn_enemy_waves::WaveSpawnPlugin,
+    66	        hide_colliders::HideCollidersPlugin,
+    67	        hammerhead::hammerhead,
+    68	    ));
+    69	    app.load_resource::<LevelAssets>();
+    70	    app.add_systems(
+    71	        OnEnter(Screen::Gameplay),
+    72	        (spawn_level, katana_setup).chain(),
+    73	    );
+    74	    app.add_systems(
+    75	        OnExit(Screen::Gameplay),
+    76	        |mut commands: Commands, camera: Single<Entity, With<Camera3d>>| {
+    77	            commands
+    78	                .entity(*camera)
+    79	                .remove::<Skybox>()
+    80	                .despawn_children()
+    81	                .remove_parent_in_place(); // make it so it's not despawned with the level
+    82	        },
+    83	    );
+    84	
+    85	    // Toggle pause on key press.
+    86	    app.add_systems(
+    87	        Update,
+    88	        (
+    89	            (pause, spawn_background_overlay, open_pause_menu).run_if(
+    90	                in_state(Screen::Gameplay)
+    91	                    .and(in_state(Menu::None))
+    92	                    .and(input_just_pressed(KeyCode::Escape)),
+    93	            ),
+    94	            go_to_death_menu.run_if(in_state(Screen::Gameplay).and(in_state(Menu::None))),
+    95	        ),
+    96	    );
+    97	    app.add_systems(OnExit(Screen::Gameplay), (close_menu, unpause));
+    98	    app.add_systems(
+    99	        OnEnter(Menu::None),
+   100	        unpause.run_if(in_state(Screen::Gameplay)),
+   101	    );
+   102	
+   103	    // todo: system ordering is likely incorrect and use FIXED UPDATE here.
+   104	    // app.add_systems(
+   105	    //     Update,
+   106	    //     // generate_navmesh.run_if(in_state(Screen::Gameplay)), //.run_if(input_just_pressed(KeyCode::Space)),
+   107	    // );
+   108	    // app.add_observer(handle_navmesh_ready);
+   109	    //
+   110	    app.add_systems(
+   111	        Update,
+   112	        generate_navmesh.run_if(in_state(Screen::Gameplay)),
+   113	    );
+   114	
+   115	    app.add_observer(handle_navmesh_ready);
+   116	
+   117	    app.add_systems(
+   118	        Update,
+   119	        (
+   120	            poor_setup_for_katana_animations,
+   121	            katana_animation
+   122	                .in_set(PausableSystems)
+   123	                .run_if(in_state(Screen::Gameplay)),
+   124	        ),
+   125	    );
+   126	}
+   127	
+   128	#[derive(Resource, Asset, Clone, Reflect)]
+   129	#[reflect(Resource)]
+   130	pub struct LevelAssets {
+   131	    #[dependency]
+   132	    music: Handle<AudioSample>,
+   133	    #[dependency]
+   134	    step1: Handle<AudioSample>,
+   135	    #[dependency]
+   136	    whoosh1: Handle<AudioSample>,
+   137	    #[dependency]
+   138	    demo_level: Handle<Scene>,
+   139	    #[dependency]
+   140	    skybox: Handle<Image>,
+   141	    #[dependency]
+   142	    katana_idle: Handle<AnimationClip>,
+   143	    #[dependency]
+   144	    katana_swing: Handle<AnimationClip>,
+   145	    #[dependency]
+   146	    katana_scene: Handle<Scene>,
+   147	    #[dependency]
+   148	    hammerhead: HammerheadAssets,
+   149	}
+   150	
+   151	impl FromWorld for LevelAssets {
+   152	    fn from_world(world: &mut World) -> Self {
+   153	        let assets = world.resource::<AssetServer>();
+   154	        Self {
+   155	            music: assets.load("audio/music/Fluffing A Duck.ogg"),
+   156	            step1: assets.load("audio/sound_effects/step1.wav"),
+   157	            whoosh1: assets.load("audio/sound_effects/whoosh1.wav"),
+   158	            demo_level: assets
+   159	                .load(GltfAssetLabel::Scene(1).from_asset("models/Demo_level_heaven_sword.glb")),
+   160	            skybox: assets.load("images/skybox.ktx2"),
+   161	            katana_idle: assets.load(GltfAssetLabel::Animation(0).from_asset("models/katana.glb")),
+   162	            katana_swing: assets.load(GltfAssetLabel::Animation(1).from_asset("models/katana.glb")),
+   163	            katana_scene: assets.load(GltfAssetLabel::Scene(0).from_asset("models/katana.glb")),
+   164	            hammerhead: HammerheadAssets::load(assets),
+   165	        }
+   166	    }
+   167	}
+   168	
+   169	fn go_to_death_menu(
+   170	    mut commands: Commands,
+   171	    mut next_menu: ResMut<NextState<Menu>>,
+   172	    mut paused: ResMut<NextState<Pause>>,
+   173	    player: Single<&Player>,
+   174	) {
+   175	    if !player.is_alive() {
+   176	        commands.run_system_cached(spawn_background_overlay);
+   177	        next_menu.set(Menu::Death);
+   178	        paused.set(Pause(true));
+   179	    }
+   180	}
+   181	
+   182	fn spawn_level(
+   183	    mut commands: Commands,
+   184	    level_assets: Res<LevelAssets>,
+   185	    camera: Single<Entity, With<Camera3d>>,
+   186	    mut cursor_options: Single<&mut CursorOptions>,
+   187	    mut generator: NavmeshGenerator,
+   188	) {
+   189	    commands.insert_resource(NavmeshDone(false));
+   190	    let camera = *camera;
+   191	
+   192	    let archipelago_options: ArchipelagoOptions<ThreeD> =
+   193	        ArchipelagoOptions::from_agent_radius(0.5);
+   194	    // archipelago_options.point_sample_distance.distance_above = -2.5;
+   195	    // archipelago_options.point_sample_distance.distance_below = -2.5;
+   196	
+   197	    let archipelago_id = commands.spawn(Archipelago3d::new(archipelago_options)).id();
+   198	
+   199	    commands.spawn(Island3dBundle {
+   200	        island: Island,
+   201	        archipelago_ref: ArchipelagoRef3d::new(archipelago_id),
+   202	        nav_mesh: NavMeshHandle3d(generator.generate(NavmeshSettings {
+   203	            agent_radius: 0.5,
+   204	            ..default()
+   205	        })),
+   206	    });
+   207	
+   208	    commands.insert_resource(NavmeshArchipelagoHolder(archipelago_id));
+   209	
+   210	    set_cursor_grab(&mut cursor_options, true);
+   211	    let player = player::spawn_player(&mut commands, camera);
+   212	
+   213	    let music = commands
+   214	        .spawn((
+   215	            Name::new("Gameplay Music"),
+   216	            // music(level_assets.music.clone()),
+   217	        ))
+   218	        .id();
+   219	
+   220	    // Set camera position and add atmosphere
+   221	    let transform = Transform::from_xyz(0.0, 0.8 + 0.9, 0.0);
+   222	    commands.entity(camera).insert((
+   223	        transform,
+   224	        CameraRotation(transform.rotation.x),
+   225	        Skybox {
+   226	            image: level_assets.skybox.clone(),
+   227	            brightness: 1000.0,
+   228	            ..Default::default()
+   229	        },
+   230	    ));
+   231	
+   232	    let light = commands
+   233	        .spawn((
+   234	            Name::new("Light"),
+   235	            DirectionalLight {
+   236	                shadows_enabled: true,
+   237	                ..default()
+   238	            },
+   239	            Transform::from_rotation(Quat::from_euler(
+   240	                EulerRot::YXZ,
+   241	                -35f32.to_radians(),
+   242	                -25f32.to_radians(),
+   243	                0.0,
+   244	            )),
+   245	        ))
+   246	        .id();
+   247	
+   248	    let level = commands
+   249	        .spawn((
+   250	            Name::new("Level"),
+   251	            Transform::default(),
+   252	            Visibility::default(),
+   253	            DespawnOnExit(Screen::Gameplay),
+   254	            SceneRoot(level_assets.demo_level.clone()),
+   255	            Level,
+   256	        ))
+   257	        .add_children(&[player, light, music])
+   258	        .id();
+   259	
+   260	    // todo: remove
+   261	    // commands.spawn(SceneRoot(level_assets.props.clone()));
+   262	
+   263	    // commands.queue(enemy::EnemySpawnCmd {
+   264	    //     transform: Transform::from_xyz(0.0, 0.0, 5.0).with_scale(Vec3::ONE * 1.3),
+   265	    //     parent: Some(level),
+   266	    // });
+   267	    // commands.queue(enemy::EnemySpawnCmd {
+   268	    //     pos: Isometry3d::from_translation(vec3(4.0, 0.0, 5.0)),
+   269	    //     parent: Some(level),
+   270	    // });
+   271	}
+   272	
+   273	fn unpause(mut next_pause: ResMut<NextState<Pause>>) {
+   274	    next_pause.set(Pause(false));
+   275	}
+   276	
+   277	fn pause(mut next_pause: ResMut<NextState<Pause>>) {
+   278	    next_pause.set(Pause(true));
+   279	}
+   280	
+   281	fn spawn_background_overlay(mut commands: Commands) {
+   282	    commands.spawn((
+   283	        Name::new("Background Overlay"),
+   284	        Node {
+   285	            width: percent(100),
+   286	            height: percent(100),
+   287	            ..default()
+   288	        },
+   289	        GlobalZIndex(1),
+   290	        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+   291	        DespawnOnExit(Pause(true)),
+   292	    ));
+   293	}
+   294	
+   295	fn open_pause_menu(mut next_menu: ResMut<NextState<Menu>>) {
+   296	    next_menu.set(Menu::Pause);
+   297	}
+   298	
+   299	fn close_menu(mut next_menu: ResMut<NextState<Menu>>) {
+   300	    next_menu.set(Menu::None);
+   301	}
+   302	
+   303	// -------------------------------
+   304	// NAVMESH
+   305	// -------------------------------
+   306	
+   307	#[derive(Resource)]
+   308	struct NavmeshDone(bool);
+   309	
+   310	#[derive(Resource)]
+   311	pub struct NavmeshArchipelagoHolder(pub Entity);
+   312	
+   313	fn generate_navmesh(
+   314	    mut generator: NavmeshGenerator,
+   315	    island: Query<&NavMeshHandle3d, With<Island>>,
+   316	    navmesh_done: Res<NavmeshDone>,
+   317	) {
+   318	    if navmesh_done.0 {
+   319	        return;
+   320	    }
+   321	
+   322	    info!("Generating navmesh...");
+   323	
+   324	    let mut count = 0;
+   325	
+   326	    for island in &island {
+   327	        count += 1;
+   328	
+   329	        generator.regenerate(
+   330	            &island.0,
+   331	            NavmeshSettings {
+   332	                agent_radius: 0.5,
+   333	                ..default()
+   334	            },
+   335	        );
+   336	    }
+   337	
+   338	    info!("Started navmesh regen for {count} islands");
+   339	}
+   340	
+   341	fn handle_navmesh_ready(
+   342	    _: On<NavmeshReady>,
+   343	    mut navmesh_done: ResMut<NavmeshDone>,
+   344	) {
+   345	    info!("Navmesh ready!");
+   346	
+   347	    navmesh_done.0 = true;
+   348	}
+
+
+============================================
+FILE: ./src/screens/gameplay/particle_system.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	pub struct ParticleSystemPlugin {}
+     4	
+     5	impl Plugin for ParticleSystemPlugin {}
+     6	
+     7	fn environment_particles() {
+     8	
+     9	}
+    10	
+    11	fn cloud_particles() {
+    12	
+    13	}
+    14	
+    15	fn enemy_particles()  {}
+
+
+============================================
+FILE: ./src/screens/gameplay/player.rs
+============================================
+     1	// use crate::screens::gameplay::CoefficientCombine;
+     2	// use avian3d::prelude::CoefficientCombine;
+     3	use avian3d::prelude::*;
+     4	use bevy::prelude::*;
+     5	
+     6	use crate::screens::gameplay::character_controller::CharacterControllerBundle;
+     7	
+     8	#[derive(Component, Debug, Clone, Copy, PartialEq, Reflect)]
+     9	#[reflect(Component)]
+    10	pub struct Player {
+    11	    // normalized values (0.0..1.0)
+    12	    pub health: f32,
+    13	    pub hallucination_severity: f32,
+    14	    pub dash_cooldown: f32,
+    15	}
+    16	
+    17	impl Default for Player {
+    18	    fn default() -> Self {
+    19	        Self {
+    20	            health: 1.0,
+    21	            hallucination_severity: 0.0,
+    22	            dash_cooldown: 0.0,
+    23	        }
+    24	    }
+    25	}
+    26	
+    27	impl Player {
+    28	    pub fn is_alive(&self) -> bool {
+    29	        self.health > 0.0
+    30	    }
+    31	}
+    32	
+    33	pub fn spawn_player(commands: &mut Commands, camera: Entity) -> Entity {
+    34	    let player_collider = Collider::capsule(0.4, 1.0);
+    35	    commands
+    36	        .spawn((
+    37	            Name::new("Player"),
+    38	            CharacterControllerBundle::new(player_collider.clone()).with_movement(
+    39	                1.0,
+    40	                0.90,
+    41	                10.0,
+    42	                35f32.to_radians(),
+    43	            ),
+    44	            Friction::ZERO.with_combine_rule(CoefficientCombine::Min),
+    45	            Restitution::ZERO.with_combine_rule(CoefficientCombine::Min),
+    46	            GravityScale(1.5),
+    47	            Transform::from_xyz(0.0, 0.9, 2.0),
+    48	            Player::default(),
+    49	            TransformInterpolation,
+    50	            Children::spawn_one((player_collider, Transform::from_xyz(0., 0.9, 0.))),
+    51	        ))
+    52	        .add_child(camera)
+    53	        .id()
+    54	}
+
+
+============================================
+FILE: ./src/screens/gameplay/powerups.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	pub struct PowerUpsPlugin {
+     4	
+     5	}
+     6	
+     7	impl Plugin for PowerUpsPlugin {
+     8	
+     9	}
+    10	
+    11	fn gain_more_damage () {
+    12	
+    13	}
+    14	
+    15	fn temporary_modifiers() {
+    16	
+    17	}
+    18	
+    19	fn butterfly_healing() {
+    20	
+    21	}
+
+
+============================================
+FILE: ./src/screens/gameplay/spawn_enemy_waves.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	use crate::screens::gameplay::enemy_spawn::EnemySpawn;
+     4	use crate::screens::gameplay::enemy::EnemySpawnCmd;
+     5	use crate::screens::gameplay::enemy_spawn::SpawnConsumed;
+     6	
+     7	use crate::screens::Screen;
+     8	use crate::screens::gameplay::{
+     9	    enemy::spawn_enemy,
+    10	    LevelAssets,
+    11	    NavmeshArchipelagoHolder,
+    12	};
+    13	
+    14	/// ===============================
+    15	/// RESOURCE: CONTROL DE OLEADAS
+    16	/// ===============================
+    17	
+    18	#[derive(Resource)]
+    19	pub struct WaveManager {
+    20	    pub timer: Timer,
+    21	    pub current_wave: i32,
+    22	    pub current_zone: String,
+    23	}
+    24	
+    25	impl Default for WaveManager {
+    26	    fn default() -> Self {
+    27	        Self {
+    28	            timer: Timer::from_seconds(10.0, TimerMode::Repeating),
+    29	            current_wave: 0,
+    30	            current_zone: "first_arena".to_string(),
+    31	        }
+    32	    }
+    33	}
+    34	
+    35	/// ===============================
+    36	/// COMPONENTE: SPAWN DESDE BLENDER
+    37	/// (Importado por bevy_skein)
+    38	/// ===============================
+    39	
+    40	
+    41	/// Marca que ya fue usado
+    42	// #[derive(Component)]
+    43	// pub struct SpawnConsumed;
+    44	
+    45	/// ===============================
+    46	/// PLUGIN
+    47	/// ===============================
+    48	
+    49	pub struct WaveSpawnPlugin;
+    50	
+    51	impl Plugin for WaveSpawnPlugin {
+    52	    fn build(&self, app: &mut App) {
+    53	        app.register_type::<EnemySpawn>();
+    54	
+    55	        app.init_resource::<WaveManager>();
+    56	
+    57	        app.add_systems(
+    58	            OnEnter(Screen::Gameplay),
+    59	            setup_waves,
+    60	        );
+    61	
+    62	        app.add_systems(
+    63	            Update,
+    64	            update_waves
+    65	                .run_if(in_state(Screen::Gameplay)),
+    66	        );
+    67	    }
+    68	}
+    69	
+    70	/// ===============================
+    71	/// SETUP
+    72	/// ===============================
+    73	
+    74	fn setup_waves(
+    75	    mut manager: ResMut<WaveManager>,
+    76	) {
+    77	    manager.current_wave = 0;
+    78	    manager.timer.reset();
+    79	
+    80	    info!("🌊 Wave system initialized");
+    81	}
+    82	
+    83	/// ===============================
+    84	/// SISTEMA PRINCIPAL
+    85	/// ===============================
+    86	
+    87	fn update_waves(
+    88	    time: Res<Time>,
+    89	    mut manager: ResMut<WaveManager>,
+    90	    mut commands: Commands,
+    91	    // Eliminamos Without<SpawnConsumed> para que los puntos sean reutilizables
+    92	    spawns: Query<(&Name, &GlobalTransform, Option<&EnemySpawn>)>,
+    93	) {
+    94	    manager.timer.tick(time.delta());
+    95	
+    96	    if !manager.timer.just_finished() {
+    97	        return;
+    98	    }
+    99	
+   100	    manager.current_wave += 1;
+   101	    info!("🌊 Wave Check: Ola {}, Zona {}", manager.current_wave, manager.current_zone);
+   102	
+   103	    let mut count = 0;
+   104	    for (name, transform, maybe_spawn) in &spawns {
+   105	        // 1. Filtro por nombre (visto en Blender)
+   106	        if !name.as_str().contains("EnemySpawn") {
+   107	            continue;
+   108	        }
+   109	
+   110	        // 2. Filtro por componente (si Skein lo carga correctamente)
+   111	        // Si el componente existe, validamos zona. Si no existe, spawneamos por defecto.
+   112	        if let Some(spawn) = maybe_spawn {
+   113	            if spawn.zone != manager.current_zone {
+   114	                continue;
+   115	            }
+   116	            // Si quieres que un Empty específico solo aparezca en una ola concreta:
+   117	             if spawn.wave != manager.current_wave { continue; }
+   118	        }
+   119	
+   120	        let pos = transform.translation();
+   121	
+   122	        // Evitamos el origen por errores de carga de escena
+   123	        if pos == Vec3::ZERO { continue; }
+   124	
+   125	        info!("👾 Ola {}: Spawning enemigo desde '{}' en {:?}", manager.current_wave, name, pos);
+   126	
+   127	        // Ejecutamos el comando de spawn
+   128	        commands.queue(EnemySpawnCmd {
+   129	            transform: Transform::from_translation(pos),
+   130	            parent: None,
+   131	        });
+   132	
+   133	        count += 1;
+   134	    }
+   135	
+   136	    if count > 0 {
+   137	        info!("🚀 Ola {} completada: {} enemigos generados", manager.current_wave, count);
+   138	    } else {
+   139	        warn!("⚠️ No se encontraron puntos de spawn válidos para la zona: {}", manager.current_zone);
+   140	    }
+   141	}
+
+
+============================================
+FILE: ./src/screens/gameplay/spawn_zones.rs
+============================================
+     1	use bevy::prelude::*;
+     2	use avian3d::prelude::*;
+     3	use crate::screens::Screen;
+     4	use crate::screens::gameplay::enemy::EnemySpawnCmd;
+     5	use crate::screens::gameplay::Player;
+     6	
+     7	/* ------------------------------------------------ */
+     8	/* ---------------- COMPONENTES ------------------- */
+     9	/* ------------------------------------------------ */
+    10	#[derive(Component)]
+    11	pub struct SpawnZone;
+    12	
+    13	#[derive(Component)]
+    14	pub struct SpawnZoneActivated;
+    15	
+    16	/* ------------------------------------------------ */
+    17	/* ---------------- PLUGIN ------------------------ */
+    18	/* ------------------------------------------------ */
+    19	pub struct SpawnPlugin;
+    20	
+    21	impl Plugin for SpawnPlugin {
+    22	    fn build(&self, app: &mut App) {
+    23	        app.add_systems(
+    24	            Update,
+    25	            (
+    26	                tag_arena_zones,
+    27	                setup_spawn_sensors,
+    28	                detect_spawn_trigger,
+    29	                spawn_from_zones,
+    30	            )
+    31	                .chain()
+    32	                .run_if(in_state(Screen::Gameplay)),
+    33	        );
+    34	    }
+    35	}
+    36	
+    37	/* ------------------------------------------------ */
+    38	/* -------- DETECTAR ARENAS DESDE BLENDER ---------- */
+    39	/* ------------------------------------------------ */
+    40	fn tag_arena_zones(
+    41	    mut commands: Commands,
+    42	    query: Query<(Entity, &Name), Added<Name>>,
+    43	) {
+    44	    for (entity, name) in &query {
+    45	        let name_lower = name.as_str().to_lowercase();
+    46	        if name_lower.contains("collision_arena") {
+    47	            info!("SpawnZone detectada: {}", name.as_str());
+    48	            commands.entity(entity).insert(SpawnZone);
+    49	        }
+    50	    }
+    51	}
+    52	
+    53	/* ------------------------------------------------ */
+    54	/* --------- CONVERTIR EN SENSOR ------------------ */
+    55	/* ------------------------------------------------ */
+    56	fn setup_spawn_sensors(
+    57	    mut commands: Commands,
+    58	    query: Query<Entity, Added<SpawnZone>>,
+    59	) {
+    60	    for entity in &query {
+    61	        commands.entity(entity).insert((
+    62	            Sensor,
+    63	            CollisionEventsEnabled,  // ← REQUERIDO para recibir CollisionStart
+    64	        ));
+    65	    }
+    66	}
+    67	
+    68	/* ------------------------------------------------ */
+    69	/* ------- DETECTAR ENTRADA DEL JUGADOR ------------ */
+    70	/* ------------------------------------------------ */
+    71	fn detect_spawn_trigger(
+    72	    mut commands: Commands,
+    73	    mut collisions: MessageReader<CollisionStart>,  // ← MessageReader, no EventReader
+    74	    zones: Query<Entity, With<SpawnZone>>,
+    75	    activated: Query<Entity, With<SpawnZoneActivated>>,
+    76	    players: Query<Entity, With<Player>>,
+    77	) {
+    78	    for ev in collisions.read() {
+    79	        let a = ev.collider1;  // CollisionStart tiene campos nombrados
+    80	        let b = ev.collider2;
+    81	
+    82	        let zone_player =
+    83	            (zones.get(a).is_ok() && players.get(b).is_ok())
+    84	                || (zones.get(b).is_ok() && players.get(a).is_ok());
+    85	
+    86	        if !zone_player {
+    87	            continue;
+    88	        }
+    89	
+    90	        let zone = if zones.get(a).is_ok() { a } else { b };
+    91	
+    92	        if activated.get(zone).is_ok() {
+    93	            continue;
+    94	        }
+    95	
+    96	        info!("Zona activada: {:?}", zone);
+    97	        commands.entity(zone).insert(SpawnZoneActivated);
+    98	    }
+    99	}
+   100	
+   101	/* ------------------------------------------------ */
+   102	/* --------- HACER SPAWN REAL ---------------------- */
+   103	/* ------------------------------------------------ */
+   104	fn spawn_from_zones(
+   105	    mut commands: Commands,
+   106	    zones: Query<(Entity, &Transform), Added<SpawnZoneActivated>>,
+   107	) {
+   108	    for (entity, tf) in &zones {
+   109	        info!("Spawneando enemigos en {:?}", entity);
+   110	        spawn_enemies(commands.reborrow(), tf.translation);
+   111	    }
+   112	}
+   113	
+   114	/* ------------------------------------------------ */
+   115	/* --------- PATRÓN DE SPAWN ----------------------- */
+   116	/* ------------------------------------------------ */
+   117	fn spawn_enemies(
+   118	    mut commands: Commands,
+   119	    center: Vec3,
+   120	) {
+   121	    let height = 12.0;
+   122	    let positions = [
+   123	        center + Vec3::new(3.0, height, 0.0),
+   124	        center + Vec3::new(-3.0, height, 2.0),
+   125	        center + Vec3::new(0.0, height + 2.0, -3.0),
+   126	    ];
+   127	    for pos in positions {
+   128	        commands.queue(EnemySpawnCmd {
+   129	            transform: Transform::from_translation(pos),
+   130	            parent: None,
+   131	        });
+   132	    }
+   133	}
+
+
+============================================
+FILE: ./src/screens/gameplay/ui.rs
+============================================
+     1	use bevy::prelude::*;
+     2	
+     3	pub struct UserInterfacePlugin {}
+     4	
+     5	impl Plugin for UserInterfacePlugin {}
+     6	
+     7	fn player_health() {}
+     8	fn enemy_health() {}
+     9	fn powerUp_interface() {}
+
+
+============================================
+FILE: ./src/screens/gameplay/world_butterflies.rs
+============================================
+     1	use bevy::prelude::*;
+     2	use bevy_mesh::morph::MorphWeights;
+     3	use rand::prelude::*;
+     4	use rand::rngs::SmallRng;
+     5	
+     6	use crate::screens::Screen;
+     7	
+     8	/* ------------------------------------------------ */
+     9	/* ---------------- COMPONENTES ------------------- */
+    10	/* ------------------------------------------------ */
+    11	
+    12	#[derive(Component)]
+    13	pub struct Butterfly {
+    14	    pub flap_speed: f32,
+    15	    pub phase_offset: f32,
+    16	}
+    17	
+    18	#[derive(Component)]
+    19	pub struct ButterflyMovement {
+    20	    pub target: Vec3,
+    21	    pub speed: f32,
+    22	    pub change_target_timer: Timer,
+    23	    pub base_position: Vec3,
+    24	}
+    25	
+    26	/* ------------------------------------------------ */
+    27	/* ---------------- RECURSOS ---------------------- */
+    28	/* ------------------------------------------------ */
+    29	
+    30	#[derive(Resource, Deref, DerefMut)]
+    31	struct ButterflyAnimTimer(Timer);
+    32	
+    33	#[derive(Resource, Deref, DerefMut)]
+    34	struct ButterflyRng(SmallRng);
+    35	
+    36	/* ------------------------------------------------ */
+    37	/* ---------------- PLUGIN ------------------------ */
+    38	/* ------------------------------------------------ */
+    39	
+    40	pub struct WorldButterfliesPlugin;
+    41	
+    42	impl Plugin for WorldButterfliesPlugin {
+    43	    fn build(&self, app: &mut App) {
+    44	        app.insert_resource(ButterflyAnimTimer(Timer::from_seconds(
+    45	            0.05,
+    46	            TimerMode::Repeating,
+    47	        )))
+    48	        .insert_resource(ButterflyRng(SmallRng::from_rng(&mut rand::rng())))
+    49	        .add_systems(OnEnter(Screen::Gameplay), spawn_butterflies)
+    50	        .add_systems(
+    51	            Update,
+    52	            (
+    53	                detect_butterfly_meshes,
+    54	                animate_butterfly_wings,
+    55	                move_butterflies,
+    56	            )
+    57	                .run_if(in_state(Screen::Gameplay)),
+    58	        );
+    59	    }
+    60	}
+    61	
+    62	fn spawn_butterflies(asset_server: Res<AssetServer>, mut commands: Commands) {
+    63	    let handle: Handle<Scene> = asset_server.load(
+    64	        GltfAssetLabel::Scene(1).from_asset("models/Demo_level_heaven_sword.glb"),
+    65	    );
+    66	
+    67	    info!("🦋 Butterfly System: Large Map Mode (240x240m)");
+    68	
+    69	    commands.spawn((
+    70	        SceneRoot(handle),
+    71	        Transform::default(),
+    72	        Visibility::default(),
+    73	    ));
+    74	}
+    75	
+    76	/* ------------------------------------------------ */
+    77	/* --------- DETECCIÓN (LÍMITE 5 UNIDADES) -------- */
+    78	/* ------------------------------------------------ */
+    79	
+    80	fn detect_butterfly_meshes(
+    81	    mut commands: Commands,
+    82	    morph_query: Query<(Entity, &Name), (Without<Butterfly>, Added<MorphWeights>)>,
+    83	    empty_query: Query<(Entity, &Name, &GlobalTransform), (Without<ButterflyMovement>, Added<Name>)>,
+    84	) {
+    85	    // 1. Setup de Meshes (Shape Keys) - Limitamos a 5
+    86	    let mut count = 0;
+    87	    for (entity, name) in &morph_query {
+    88	        if name.as_str().to_lowercase().contains("butterfly") && count < 5 {
+    89	            commands.entity(entity).insert((
+    90	                Butterfly {
+    91	                    flap_speed: rand::random_range(10.0..18.0),
+    92	                    phase_offset: rand::random_range(0.0..std::f32::consts::TAU),
+    93	                },
+    94	                Transform::from_scale(Vec3::splat(rand::random_range(1.0..1.5))),
+    95	            ));
+    96	            count += 1;
+    97	        }
+    98	    }
+    99	
+   100	    // 2. Setup de Movimiento - Limitamos a 5
+   101	    let mut move_count = 0;
+   102	    for (entity, name, global_transform) in &empty_query {
+   103	        if name.as_str().to_lowercase().contains("butterfly") && move_count < 5 {
+   104	            let pos = global_transform.translation();
+   105	
+   106	            commands.entity(entity).insert(ButterflyMovement {
+   107	                base_position: pos,
+   108	                // Dispersión inicial masiva para mapa de 240m
+   109	                target: pos + Vec3::new(
+   110	                    rand::random_range(-80.0..80.0),
+   111	                    rand::random_range(5.0..25.0),
+   112	                    rand::random_range(-80.0..80.0),
+   113	                ),
+   114	                speed: rand::random_range(4.0..8.0), // Velocidad aumentada para distancias largas
+   115	                change_target_timer: Timer::from_seconds(
+   116	                    rand::random_range(5.0..12.0), // Tiempos de vuelo más largos
+   117	                    TimerMode::Repeating,
+   118	                ),
+   119	            });
+   120	            move_count += 1;
+   121	        }
+   122	    }
+   123	}
+   124	
+   125	/* ------------------------------------------------ */
+   126	/* ----------- ANIMACIÓN ALAS (Shape Keys) -------- */
+   127	/* ------------------------------------------------ */
+   128	
+   129	fn animate_butterfly_wings(
+   130	    time: Res<Time>,
+   131	    mut timer: ResMut<ButterflyAnimTimer>,
+   132	    mut query: Query<(&Butterfly, &mut MorphWeights)>,
+   133	) {
+   134	    timer.tick(time.delta());
+   135	    if !timer.just_finished() { return; }
+   136	
+   137	    let t = time.elapsed_secs();
+   138	    for (butterfly, mut morph) in &mut query {
+   139	        let v = ((t * butterfly.flap_speed + butterfly.phase_offset).sin() + 1.0) * 0.5;
+   140	        for w in morph.weights_mut().iter_mut() {
+   141	            *w = v;
+   142	        }
+   143	    }
+   144	}
+   145	
+   146	/* ------------------------------------------------ */
+   147	/* --------------- MOVIMIENTO MASIVO -------------- */
+   148	/* ------------------------------------------------ */
+   149	
+   150	fn move_butterflies(
+   151	    time: Res<Time>,
+   152	    mut query: Query<(&mut Transform, &mut ButterflyMovement)>,
+   153	) {
+   154	    let dt = time.delta_secs();
+   155	
+   156	    for (mut transform, mut movement) in &mut query {
+   157	        movement.change_target_timer.tick(time.delta());
+   158	
+   159	        // Cuando cambian de rumbo, eligen un punto muy lejano en el mapa
+   160	        if movement.change_target_timer.just_finished() {
+   161	            movement.target = movement.base_position + Vec3::new(
+   162	                rand::random_range(-110.0..110.0), // Casi la mitad del mapa (240m)
+   163	                rand::random_range(-10.0..30.0),   // Variación de altura notable
+   164	                rand::random_range(-110.0..110.0),
+   165	            );
+   166	        }
+   167	
+   168	        let direction = (movement.target - transform.translation).normalize_or_zero();
+   169	
+   170	        if direction.length_squared() > 0.001 {
+   171	            // Mover hacia el objetivo lejano
+   172	            transform.translation += direction * movement.speed * dt;
+   173	
+   174	            // Rotación suave para grandes trayectorias
+   175	            let target_rotation = Quat::from_rotation_arc(Vec3::Z, direction);
+   176	            transform.rotation = transform.rotation.slerp(target_rotation, dt * 1.2);
+   177	        }
+   178	    }
+   179	}
+
+
+============== END OF DUMP =================

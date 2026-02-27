@@ -5,6 +5,7 @@ mod death;
 mod main;
 mod pause;
 mod settings;
+mod victory;
 
 use bevy::prelude::*;
 
@@ -17,6 +18,7 @@ pub(super) fn plugin(app: &mut App) {
         settings::plugin,
         pause::plugin,
         death::plugin,
+        victory::plugin,
     ));
 }
 
@@ -29,4 +31,5 @@ pub enum Menu {
     Settings,
     Pause,
     Death,
+    Victory,
 }

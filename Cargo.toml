@@ -39,7 +39,7 @@ bevy_seedling = "0.7.0"
 bevy_skein = "0.5.0"
 landmass_rerecast = "0.2.0"
 bevy_framepace = "0.21"
-rand = "0.9"
+rand = "0.10"
 # Compile out low-severity logs to improve performance.
 # Remove these features if you want to profile your game with tracy.
 # (see <https://github.com/bevyengine/bevy/blob/main/docs/profiling.md#tracy-profiler>)
@@ -48,6 +48,7 @@ tracing = { version = "0.1", features = [
     "release_max_level_warn",
 ] }
 noisy_bevy = "0.13.0"
+bevy_mesh = "0.18.0"
 
 [target.wasm32-unknown-unknown.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
