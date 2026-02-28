@@ -15,6 +15,7 @@ mod visuals;
 use avian3d::prelude::{Physics, PhysicsTime};
 use bevy::{asset::AssetMetaCheck, light::GlobalAmbientLight, prelude::*};
 use bevy_skein::SkeinPlugin;
+use bevy::render::{RenderPlugin, settings::{RenderCreation, WgpuSettings, Backends}};
 
 fn main() -> AppExit {
     App::new().add_plugins(AppPlugin).run()
@@ -40,7 +41,15 @@ impl Plugin for AppPlugin {
                     .into(),
                     ..default()
                 }),
-        );
+        )
+        .set(RenderPlugin {
+                            render_creation: RenderCreation::Automatic(WgpuSettings {
+                                backends: Some(Backends::all()), // Esto permite WebGL2 como fallback
+                                ..default()
+                            }),
+                            ..default()
+                        }),
+                );
 
         // Add other plugins.
         app.add_plugins((

@@ -1,11 +1,25 @@
 <!doctype html>
-<html>
+<html lang="en">
     <head>
         <meta charset="utf-8" />
         <title>Bevy Jam 7</title>
         <base data-trunk-public-url />
+        <style>
+            body {
+                margin: 0;
+                background: #000;
+                overflow: hidden;
+            }
+            /* El ID 'bevy' debe coincidir con el que pusimos en el WindowPlugin */
+            canvas#bevy {
+                width: 100vw;
+                height: 100vh;
+                display: block;
+            }
+        </style>
     </head>
     <body>
+        <canvas id="bevy"></canvas>
         <script data-trunk src="Cargo.toml"></script>
     </body>
 </html>
