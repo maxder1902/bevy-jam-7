@@ -40,16 +40,15 @@ impl Plugin for AppPlugin {
                     }
                     .into(),
                     ..default()
+                })
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        backends: Some(Backends::all()), // This enables WebGL2 as a fallback.
+                        ..default()
+                    }),
+                    ..default()
                 }),
-        )
-        .set(RenderPlugin {
-                            render_creation: RenderCreation::Automatic(WgpuSettings {
-                                backends: Some(Backends::all()), // Esto permite WebGL2 como fallback
-                                ..default()
-                            }),
-                            ..default()
-                        }),
-                );
+        );
 
         // Add other plugins.
         app.add_plugins((
